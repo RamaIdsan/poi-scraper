@@ -27,6 +27,17 @@
     .row > div { flex:1; }
     .muted { color:var(--muted); font-size:12px; }
     .help { margin:4px 0 0; font-size:12px; line-height:1.5; }
+    .ms { position:relative; }
+    .ms-btn { width:100%; display:flex; justify-content:space-between; align-items:center; gap:8px; background:#0b1220; color:var(--ink); border:1px solid #334155; border-radius:8px; padding:9px 10px; font-size:14px; font-weight:400; text-align:left; }
+    .ms-caret { color:var(--muted); }
+    .ms-panel { position:absolute; z-index:30; left:0; right:0; margin-top:4px; background:#0b1220; border:1px solid #334155; border-radius:8px; padding:8px; box-shadow:0 10px 30px rgba(0,0,0,.45); }
+    .ms-search { margin-bottom:6px; }
+    .ms-actions { display:flex; gap:6px; margin-bottom:6px; }
+    .ms-actions button { flex:1; background:#334155; color:var(--ink); padding:5px 8px; font-size:12px; }
+    .ms-list { max-height:220px; overflow:auto; }
+    .ms-item { display:flex; align-items:center; gap:8px; padding:4px 2px; font-size:13px; color:var(--ink); margin:0; }
+    .ms-item input { width:auto; margin:0; }
+    .ms-empty { color:var(--muted); font-size:12px; padding:6px 2px; }
     .msg { margin-top:12px; padding:10px; border-radius:8px; font-size:13px; display:none; }
     .msg.err { background:#7f1d1d; display:block; }
     .msg.ok { background:#14532d; display:block; }
@@ -86,11 +97,11 @@
     <p class="muted help">Tingkat wilayah yang jadi titik pencarian. Contoh pilih <b>Kecamatan</b> → pencarian dilakukan per kecamatan. Level lebih kecil (Kelurahan/Barangay) = hasil lebih lengkap.</p>
 
     <div class="row">
-      <div><label>Provinsi</label><select id="provinsi"><option value="">(semua)</option></select></div>
-      <div id="kotaWrap"><label>Kota/Kabupaten</label><select id="kota"><option value="">(semua)</option></select></div>
+      <div><label>Provinsi (bisa pilih banyak)</label><div id="msProvinsi"></div></div>
+      <div id="kotaWrap"><label>Kota/Kabupaten (bisa pilih banyak)</label><div id="msKota"></div></div>
     </div>
-    <div id="kecWrap"><label>Kecamatan</label><select id="kecamatan"><option value="">(semua)</option></select></div>
-    <p class="muted help">Kosongkan = seluruh wilayah pada level itu. Pilih spesifik untuk membatasi area (mis. hanya Kota Bangued).</p>
+    <div id="kecWrap"><label>Kecamatan (bisa pilih banyak)</label><div id="msKecamatan"></div></div>
+    <p class="muted help">Kosongkan = seluruh wilayah pada level itu. Klik untuk membuka daftar, centang satu/lebih, dan pakai kotak cari untuk daftar panjang.</p>
 
     <div class="row">
       <div><label>Mode cakupan</label>
@@ -217,8 +228,81 @@ function tryLogin(){
   });
 }
 
-// ---------- Dropdowns ----------
+// ---------- Dropdowns (multi-pilih) ----------
 var SEP = "\u0001";
+
+function makeMulti(containerId, onChange){
+  var el = $(containerId);
+  el.className = "ms";
+  el.innerHTML =
+    '<button type="button" class="ms-btn"><span class="ms-label">(semua)</span><span class="ms-caret">▾</span></button>' +
+    '<div class="ms-panel hidden">' +
+      '<input class="ms-search" placeholder="Cari...">' +
+      '<div class="ms-actions"><button type="button" class="ms-all">Pilih semua</button><button type="button" class="ms-clear">Bersihkan</button></div>' +
+      '<div class="ms-list"></div>' +
+    '</div>';
+  var panel = el.querySelector(".ms-panel");
+  var labelEl = el.querySelector(".ms-label");
+  var searchEl = el.querySelector(".ms-search");
+  var listEl = el.querySelector(".ms-list");
+  var state = { options: [], selected: [], query: "" };
+
+  function setLabel(){
+    labelEl.textContent = state.selected.length ? (state.selected.length + " dipilih") : "(semua)";
+  }
+  function render(){
+    var q = state.query;
+    var filtered = state.options.filter(function(o){ return !q || o.toLowerCase().indexOf(q) >= 0; });
+    var shown = filtered.slice(0, 300);
+    var html = shown.map(function(o){
+      var checked = state.selected.indexOf(o) >= 0 ? " checked" : "";
+      return '<label class="ms-item"><input type="checkbox" value="' + esc(o) + '"' + checked + '> ' + esc(o) + '</label>';
+    }).join("");
+    if (!shown.length) html = '<div class="ms-empty">Tidak ada hasil.</div>';
+    else if (filtered.length > shown.length) html += '<div class="ms-empty">+' + (filtered.length - shown.length) + ' lainnya - ketik untuk mencari.</div>';
+    listEl.innerHTML = html;
+  }
+  function fire(){ if (onChange) onChange(state.selected.slice()); }
+  function togglePanel(open){
+    document.querySelectorAll(".ms-panel").forEach(function(p){ if (p !== panel) p.classList.add("hidden"); });
+    panel.classList.toggle("hidden", !open);
+    if (open){ searchEl.value = ""; state.query = ""; render(); searchEl.focus(); }
+  }
+
+  el.querySelector(".ms-btn").addEventListener("click", function(e){ e.stopPropagation(); togglePanel(panel.classList.contains("hidden")); });
+  panel.addEventListener("click", function(e){ e.stopPropagation(); });
+  searchEl.addEventListener("input", function(){ state.query = searchEl.value.toLowerCase(); render(); });
+  el.querySelector(".ms-all").addEventListener("click", function(){ state.selected = state.options.slice(); setLabel(); render(); fire(); });
+  el.querySelector(".ms-clear").addEventListener("click", function(){ state.selected = []; setLabel(); render(); fire(); });
+  listEl.addEventListener("change", function(e){
+    if (!e.target || e.target.type !== "checkbox") return;
+    var v = e.target.value;
+    if (e.target.checked){ if (state.selected.indexOf(v) < 0) state.selected.push(v); }
+    else { state.selected = state.selected.filter(function(x){ return x !== v; }); }
+    setLabel(); fire();
+  });
+
+  return {
+    setOptions: function(list){
+      state.options = list.slice();
+      var valid = state.options;
+      state.selected = state.selected.filter(function(x){ return valid.indexOf(x) >= 0; });
+      setLabel(); render();
+    },
+    getSelected: function(){ return state.selected.slice(); },
+    clear: function(){ state.selected = []; setLabel(); render(); }
+  };
+}
+
+var MS = {
+  provinsi: makeMulti("msProvinsi", function(){ onProvChange(); }),
+  kota: makeMulti("msKota", function(){ onKotaChange(); }),
+  kecamatan: makeMulti("msKecamatan", function(){ onKecChange(); })
+};
+
+document.addEventListener("click", function(){
+  document.querySelectorAll(".ms-panel").forEach(function(p){ p.classList.add("hidden"); });
+});
 
 function loadCountry(){
   var c = $("country").value;
@@ -240,29 +324,59 @@ function loadCountry(){
 }
 
 function fillProvinces(){
-  var p = $("provinsi"); p.innerHTML = '<option value="">(semua)</option>';
-  INDEX.provinces.forEach(function(x){ var o = document.createElement("option"); o.value=x; o.textContent=x; p.appendChild(o); });
-  fillCities();
+  MS.provinsi.setOptions(INDEX.provinces.slice());
+  MS.kota.clear();
+  MS.kecamatan.clear();
+  rebuildCities();
+  rebuildKecamatan();
   syncLevelUI();
 }
 
-function fillCities(){
-  var prov = $("provinsi").value;
-  var k = $("kota"); k.innerHTML = '<option value="">(semua)</option>';
-  if (prov && INDEX.tree[prov]){
-    Object.keys(INDEX.tree[prov]).sort().forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; k.appendChild(o); });
-  }
-  fillKecamatan();
+// Daftar kota = gabungan kota dari provinsi terpilih (atau semua bila kosong).
+function rebuildCities(){
+  var provs = MS.provinsi.getSelected();
+  var pool = provs.length ? provs : INDEX.provinces;
+  var set = {};
+  pool.forEach(function(p){
+    var c = INDEX.tree[p] || {};
+    Object.keys(c).forEach(function(x){ set[x] = 1; });
+  });
+  MS.kota.setOptions(Object.keys(set).sort());
 }
 
-function fillKecamatan(){
-  var prov=$("provinsi").value, city=$("kota").value;
-  var ke=$("kecamatan"); ke.innerHTML='<option value="">(semua)</option>';
-  if (prov && city && INDEX.tree[prov] && INDEX.tree[prov][city]){
-    INDEX.tree[prov][city].forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; ke.appendChild(o); });
-  }
+// Daftar kecamatan = gabungan dari (provinsi,kota) terpilih.
+function rebuildKecamatan(){
+  var hasKec = INDEX.levels.indexOf("kecamatan") >= 0;
+  if (!hasKec){ MS.kecamatan.setOptions([]); return; }
+  var provs = MS.provinsi.getSelected();
+  var pool = provs.length ? provs : INDEX.provinces;
+  var citySel = MS.kota.getSelected();
+  var set = {};
+  pool.forEach(function(p){
+    var c = INDEX.tree[p] || {};
+    Object.keys(c).forEach(function(city){
+      if (citySel.length && citySel.indexOf(city) < 0) return;
+      (c[city] || []).forEach(function(k){ set[k] = 1; });
+    });
+  });
+  MS.kecamatan.setOptions(Object.keys(set).sort());
+}
+
+function onProvChange(){
+  MS.kota.clear();
+  MS.kecamatan.clear();
+  rebuildCities();
+  rebuildKecamatan();
   recalc();
 }
+
+function onKotaChange(){
+  MS.kecamatan.clear();
+  rebuildKecamatan();
+  recalc();
+}
+
+function onKecChange(){ recalc(); }
 
 // Sembunyikan dropdown di bawah level target agar scope konsisten.
 function syncLevelUI(){
@@ -272,9 +386,9 @@ function syncLevelUI(){
   var li = levels.indexOf($("level").value);
   $("kotaWrap").classList.toggle("hidden", li < 1);
   $("kecWrap").classList.toggle("hidden", !(hasKec && li >= 2));
-  if (li < 1) $("kota").value = "";
-  if (!(hasKec && li >= 2)) $("kecamatan").value = "";
-  fillKecamatan();
+  if (li < 1) MS.kota.clear();
+  if (!(hasKec && li >= 2)) MS.kecamatan.clear();
+  recalc();
 }
 
 function picked(list, sel){ return (sel && sel.length) ? sel : list; }
@@ -313,10 +427,9 @@ function countAtLevel(idx, level, scope){
 }
 
 function currentScope(){
-  var scope = { provinsi: [], kota: [], kecamatan: [] };
-  if ($("provinsi").value) scope.provinsi = [$("provinsi").value];
-  if (!$("kotaWrap").classList.contains("hidden") && $("kota").value) scope.kota = [$("kota").value];
-  if (!$("kecWrap").classList.contains("hidden") && $("kecamatan").value) scope.kecamatan = [$("kecamatan").value];
+  var scope = { provinsi: MS.provinsi.getSelected(), kota: [], kecamatan: [] };
+  if (!$("kotaWrap").classList.contains("hidden")) scope.kota = MS.kota.getSelected();
+  if (!$("kecWrap").classList.contains("hidden")) scope.kecamatan = MS.kecamatan.getSelected();
   return scope;
 }
 
@@ -338,8 +451,6 @@ function recalc(){
 }
 
 $("country") && $("country").addEventListener("change", loadCountry);
-$("provinsi") && $("provinsi").addEventListener("change", function(){ fillCities(); });
-$("kota") && $("kota").addEventListener("change", fillKecamatan);
 $("level") && $("level").addEventListener("change", syncLevelUI);
 $("mode") && $("mode").addEventListener("change", recalc);
 $("tile") && $("tile").addEventListener("change", recalc);

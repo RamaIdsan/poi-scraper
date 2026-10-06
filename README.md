@@ -138,12 +138,13 @@ curl -s -X POST "$WEBAPP_URL" -H "Content-Type: application/json" -d '{
     "country": "indonesia",
     "brand": "Alfamart",
     "level": "kecamatan",
-    "scope": {"provinsi": ["Sumatera Utara"]},
+    "scope": {"provinsi": ["Sumatera Utara", "Riau"]},
     "mode": "unit",
     "tile": 0
   }
 }'
 ```
+`scope` menerima array (bisa banyak provinsi/kota/kecamatan).
 Action lain: `jobs.get` (`payload.job_id`), `jobs.list`.
 
 Respon sukses: `{"ok":true,"data":{...}}`; gagal: `{"ok":false,"error":"..."}`.

@@ -66,9 +66,21 @@ pencarian untuk setiap unit pada level ini (di dalam wilayah yang Anda pilih).
 **Pedoman:** makin kecil level, makin lengkap hasilnya (karena Google Maps membatasi
 jumlah hasil per pencarian), tetapi makin lama.
 
-### 3.4 Provinsi / Kota / Kecamatan (dropdown bertingkat)
-Filter wilayah. Biarkan `(semua)` untuk seluruh wilayah pada level itu, atau pilih
-satu/lebih spesifik. Dropdown Kota mengikuti Provinsi, dan Kecamatan mengikuti Kota.
+### 3.4 Provinsi / Kota / Kecamatan (multi-pilih bertingkat)
+Filter wilayah dengan **dropdown checkbox**:
+- Klik kotak untuk membuka daftar; centang **satu atau lebih** unit.
+- Ada **kotak cari** (daftar panjang) dan tombol **Pilih semua / Bersihkan**.
+- Kosong = `(semua)` untuk level itu.
+- Bertingkat: daftar Kota = gabungan kota dari provinsi terpilih; Kecamatan =
+  gabungan dari (provinsi, kota) terpilih.
+- Ganti pilihan induk → pilihan turunan otomatis direset.
+
+Contoh scope multi-nilai:
+```json
+{"provinsi": ["Sumatera Utara", "Riau"], "kota": ["Kota Medan", "Kota Pekanbaru"]}
+```
+Catatan: nama kota dipakai apa adanya; bila dua provinsi terpilih punya kota bernama
+sama, memilih nama itu berlaku untuk keduanya (kasus jarang).
 
 ### 3.5 Mode cakupan
 | Mode | Arti | Kapan dipakai |
@@ -229,12 +241,15 @@ curl -s -X POST "$WEBAPP_URL" -H "Content-Type: application/json" -d '{
     "country": "indonesia",
     "brand": "Alfamart",
     "level": "kecamatan",
-    "scope": {"provinsi": ["Sumatera Utara"]},
+    "scope": {"provinsi": ["Sumatera Utara", "Riau"]},
     "mode": "unit",
     "tile": 0
   }
 }'
 ```
+
+> `scope` menerima **array** — bisa banyak provinsi/kota/kecamatan, mis.
+> `{"provinsi":["Sumatera Utara","Riau"],"kota":["Kota Medan","Kota Pekanbaru"]}`.
 
 | Action | Payload | Keterangan |
 |---|---|---|

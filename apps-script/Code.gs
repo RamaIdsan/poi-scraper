@@ -14,7 +14,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-06.5";
+var APP_VERSION = "2026-10-06.6";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
