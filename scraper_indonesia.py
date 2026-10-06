@@ -1257,6 +1257,7 @@ def main(
     filter_relevance,
     admin_radius_km,
     progress_cb=None,
+    data_cb=None,
 ):
     df = read_target_file(input_file)
     total_rows = len(df)
@@ -1472,6 +1473,11 @@ def main(
                             save_to_csv(data, save_filename)
                             last_saved_index = len(data)
                             logger.info(f"Auto-save: {len(data)} record -> {save_filename}")
+                            if data_cb:
+                                try:
+                                    data_cb(data)
+                                except Exception:
+                                    pass
 
                     except (PlaywrightTimeoutError, Exception) as exc:
                         stats["errors"] += 1
@@ -1491,18 +1497,29 @@ def main(
 
                 if progress_cb:
                     try:
-                        progress_cb(stats, index + 1, total_rows, len(data))
+                        progress_cb(stats, index + 1, total_rows, len(data), admin)
                     except Exception:
                         pass
 
                 if len(data) > last_saved_index:
                     save_to_csv(data, save_filename)
                     last_saved_index = len(data)
+                    if data_cb:
+                        try:
+                            data_cb(data)
+                        except Exception:
+                            pass
 
                 print_progress(index + 1, total_rows, start_time, len(data), stats["duplicates"], stats["errors"], admin)
 
             if len(data) > last_saved_index or not Path(save_filename).exists():
                 save_to_csv(data, save_filename)
+
+            if data_cb:
+                try:
+                    data_cb(data)
+                except Exception:
+                    pass
 
             save_checkpoint(state_path, {
                 "next_row_index": total_rows,
@@ -1616,7 +1633,7 @@ def plan_chunks(spec, profile, threshold=40):
     return chunks, counts
 
 
-def run_job(spec_path, progress_callback=None):
+def run_job(spec_path, progress_callback=None, data_callback=None):
     """Jalankan satu job dari file spec JSON. Mengembalikan manifest."""
     spec_path = Path(spec_path)
     spec = json.loads(spec_path.read_text(encoding="utf-8-sig"))
@@ -1645,9 +1662,13 @@ def run_job(spec_path, progress_callback=None):
         input_file, index=False, encoding="utf-8-sig"
     )
 
-    def _cb(stats, current, total, scraped):
+    def _cb(stats, current, total, scraped, admin=""):
         if progress_callback:
-            progress_callback(stats, current, total, scraped)
+            progress_callback(stats, current, total, scraped, admin)
+
+    def _dcb(data_rows):
+        if data_callback:
+            data_callback(data_rows)
 
     data = main(
         input_file=str(input_file),
@@ -1666,6 +1687,7 @@ def run_job(spec_path, progress_callback=None):
         filter_relevance=bool(params.get("filter_relevance", True)),
         admin_radius_km=params.get("radius_km"),
         progress_cb=_cb,
+        data_cb=_dcb,
     )
 
     manifest = {
@@ -1833,7 +1855,7 @@ if __name__ == "__main__":
     default_country = "indonesia"
 
     if args.job:
-        def _emit_progress(stats, current, total, scraped):
+        def _emit_progress(stats, current, total, scraped, admin=""):
             line = {
                 "type": "progress",
                 "current_row": current,

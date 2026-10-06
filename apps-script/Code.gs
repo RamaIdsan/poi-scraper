@@ -7,11 +7,13 @@
 
 var JOB_HEADERS = [
   "job_id", "user", "country", "brand", "spec_json", "status", "progress",
-  "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error"
+  "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error",
+  "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url"
 ];
 var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at"
 ];
+var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -161,24 +163,37 @@ function createJob_(user, payload) {
   if (country !== "indonesia" && country !== "philippines") throw new Error("Negara tidak dikenal.");
 
   var jobId = Utilities.getUuid();
+  var resultTab = makeResultTab_(brand, jobId);
   var spec = {
     job_id: jobId,
+    user: user.email,
     country: country,
     brand: brand,
     level: payload.level || "",
     scope: payload.scope || {},
     mode: payload.mode || "unit",
     tile: Number(payload.tile || 0),
+    result_sheet: resultTab.name,
     params: payload.params || { filter_relevance: true, headless: true }
   };
 
   tab_("Jobs", JOB_HEADERS).appendRow([
     jobId, user.email, country, brand, JSON.stringify(spec),
-    "queued", "0%", nowStr_(), "", "", "", "", ""
+    "queued", "0%", nowStr_(), "", "", "", "", "",
+    resultTab.name, resultTab.gid, "", 0, 0, "", ""
   ]);
   incrementUsed_(user.email);
-  try { dispatch(); } catch (e) { log_("dispatch error: " + e); }
-  return { job_id: jobId, status: "queued" };
+  try { dispatch(); } catch (e) { log_(jobId, user.email, "dispatch error: " + e); }
+  return { job_id: jobId, status: "queued", result_sheet: resultTab.name };
+}
+
+function makeResultTab_(brand, jobId) {
+  var ss = sheet_();
+  var stamp = Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd_HHmm");
+  var safe = String(brand).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "result";
+  var name = "Result_" + safe + "_" + stamp + "_" + String(jobId).slice(0, 8);
+  var sh = ss.insertSheet(name);
+  return { name: name, gid: sh.getSheetId() };
 }
 
 function getJob_(jobId) {
@@ -196,37 +211,53 @@ function listJobs_(user) {
     return admin || String(j.user).toLowerCase() === String(user.email).toLowerCase();
   });
   out.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+  var sheetId = prop_("SHEET_ID");
   return out.slice(0, 100).map(function (j) {
+    var gid = j.result_gid;
+    var tabUrl = (j.result_sheet && gid !== "" && gid !== null && gid !== undefined)
+      ? "https://docs.google.com/spreadsheets/d/" + sheetId + "/edit#gid=" + gid
+      : "";
     return {
-      job_id: j.job_id, country: j.country, brand: j.brand, status: j.status,
+      job_id: j.job_id, user: j.user, country: j.country, brand: j.brand, status: j.status,
       progress: j.progress, created_at: j.created_at, finished_at: j.finished_at,
-      output_url: j.output_url, error: j.error
+      output_url: j.output_url, error: j.error,
+      current_target: j.current_target, listings_found: j.listings_found, records: j.records,
+      eta: j.eta, run_url: j.run_url, result_sheet: j.result_sheet, result_url: tabUrl
     };
   });
 }
 
 // ------------------------------------------------------------
-// Dispatch (1 job berjalan sekaligus)
+// Dispatch (hingga MAX_PARALLEL job berjalan bersamaan)
 // ------------------------------------------------------------
 function dispatch() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return;
   try {
+    var max = Number(prop_("MAX_PARALLEL", "3"));
+    if (!max || max < 1) max = 1;
+
     var jobs = readTable_("Jobs", JOB_HEADERS);
-    var busy = jobs.some(function (j) {
+    var active = jobs.filter(function (j) {
       var s = String(j.status).toLowerCase();
       return s === "running" || s === "dispatched";
-    });
-    if (busy) return;
+    }).length;
+    if (active >= max) return;
 
     var queued = jobs.filter(function (j) { return String(j.status).toLowerCase() === "queued"; });
-    if (!queued.length) return;
     queued.sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
-    var job = queued[0];
 
-    var spec = JSON.parse(job.spec_json);
-    triggerWorkflow_(spec, job.job_id);
-    setJobField_(job.job_id, "status", "dispatched");
+    var slots = max - active;
+    for (var i = 0; i < queued.length && i < slots; i++) {
+      var job = queued[i];
+      try {
+        var spec = JSON.parse(job.spec_json);
+        triggerWorkflow_(spec, job.job_id);
+        setJobField_(job.job_id, "status", "dispatched");
+      } catch (e) {
+        log_(job.job_id, job.user, "dispatch gagal: " + e);
+      }
+    }
   } finally {
     lock.releaseLock();
   }
@@ -269,8 +300,10 @@ function triggerWorkflow_(spec, jobId) {
   }
 }
 
-function log_(msg) {
-  try { tab_("Logs", ["timestamp", "message"]).appendRow([nowStr_(), String(msg)]); } catch (e) {}
+function log_(jobId, user, msg) {
+  try {
+    tab_("Logs", LOG_HEADERS).appendRow([nowStr_(), String(jobId || ""), String(user || ""), String(msg || "")]);
+  } catch (e) {}
 }
 
 // ------------------------------------------------------------
@@ -300,7 +333,17 @@ function adminCreateKey_(email, quota) {
   } else {
     appendUser_(email, hashKey_(key), Number(quota || 0), true);
   }
+  shareSheetViewer_(email);
   return { email: email, api_key: key };
+}
+
+function shareSheetViewer_(email) {
+  try {
+    var ss = sheet_();
+    DriveApp.getFileById(ss.getId()).addViewer(String(email).trim().toLowerCase());
+  } catch (e) {
+    log_("", email, "share viewer gagal: " + e);
+  }
 }
 
 function adminSetActive_(email, active) {
@@ -404,10 +447,18 @@ function uiCall(action, payload, ident) {
 // ------------------------------------------------------------
 // Setup (jalankan sekali dari editor)
 // ------------------------------------------------------------
+function syncHeaders_(name, headers) {
+  var sh = tab_(name, headers);
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+}
+
 function setup() {
   tab_("Users", USER_HEADERS);
   tab_("Jobs", JOB_HEADERS);
-  tab_("Logs", ["timestamp", "message"]);
+  tab_("Logs", LOG_HEADERS);
+  syncHeaders_("Users", USER_HEADERS);
+  syncHeaders_("Jobs", JOB_HEADERS);
+  syncHeaders_("Logs", LOG_HEADERS);
   var p = PropertiesService.getScriptProperties();
   var defaults = {
     GITHUB_OWNER: "RamaIdsan",
@@ -415,7 +466,8 @@ function setup() {
     GITHUB_REF: "main",
     INDEX_BASE: "https://raw.githubusercontent.com/RamaIdsan/poi-scraper/main/admin",
     ADMIN_EMAILS: "ramaidsan9995@gmail.com",
-    DEFAULT_QUOTA: "0"
+    DEFAULT_QUOTA: "0",
+    MAX_PARALLEL: "3"
   };
   Object.keys(defaults).forEach(function (k) {
     if (!p.getProperty(k)) p.setProperty(k, defaults[k]);
@@ -441,6 +493,14 @@ function setAdminEmails(emails) {
   Logger.log("ADMIN_EMAILS = " + emails);
 }
 
+function setMaxParallel(n) {
+  n = Number(n);
+  if (!n || n < 1) n = 1;
+  PropertiesService.getScriptProperties().setProperty("MAX_PARALLEL", String(n));
+  Logger.log("MAX_PARALLEL = " + n);
+  return n;
+}
+
 /**
  * Bootstrap user admin pertama (dijalankan sekali dari editor Apps Script).
  * Membuat/reset API key untuk email admin, lalu mencetaknya ke Execution log.
@@ -449,7 +509,10 @@ function setAdminEmails(emails) {
 function bootstrapAdmin() {
   tab_("Users", USER_HEADERS);
   tab_("Jobs", JOB_HEADERS);
-  tab_("Logs", ["timestamp", "message"]);
+  tab_("Logs", LOG_HEADERS);
+  syncHeaders_("Users", USER_HEADERS);
+  syncHeaders_("Jobs", JOB_HEADERS);
+  syncHeaders_("Logs", LOG_HEADERS);
 
   var email = String(prop_("ADMIN_EMAILS", "ramaidsan9995@gmail.com")).split(",")[0].trim();
   if (!email) throw new Error("ADMIN_EMAILS kosong. Jalankan setAdminEmails('ramaidsan9995@gmail.com') dulu.");

@@ -148,9 +148,21 @@ Respon sukses: `{"ok":true,"data":{...}}`; gagal: `{"ok":false,"error":"..."}`.
 
 ---
 
+## Multi-user, hasil & monitoring
+- **Banyak akun**: admin membuat API key per orang via panel Admin (email + kuota). Tiap user login dengan key sendiri (atau Google bila `OAUTH_CLIENT_ID` diisi).
+- **Paralel**: `MAX_PARALLEL` (default 3) mengatur berapa job jalan bersamaan; sisanya `queued` dan otomatis dipicu. Ubah via `setMaxParallel(n)`.
+- **Hasil**: tiap job punya tab sendiri di spreadsheet: `Result_<brand>_<tanggal>_<job8>`. Selama scraping, hasil **mengalir (streaming)** ke tab; saat selesai dirapikan (dedup) oleh job merge. CSV final juga diunggah ke Drive.
+- **Progress**: kolom `progress`, `current_target`, `records`, `listings_found`, `eta`, `run_url` di tab `Jobs`; dashboard auto-refresh tiap 10 dtk.
+- **Log**: tab `Logs` mencatat milestone (mulai chunk, selesai, error). Log lengkap ada di GitHub Actions (`run_url` tombol **log**).
+- **Akses**: spreadsheet di-share **Viewer** ke setiap email user (otomatis saat admin membuat key). Artinya semua user bisa melihat semua tab; pembatasan "hanya miliknya" hanya berlaku di tampilan dashboard.
+- Admin melihat semua job; user biasa hanya melihat job miliknya.
+
+---
+
 ## Catatan & batasan
 - GitHub Actions maksimum **6 jam/job**; scope besar otomatis dipecah **per provinsi** lalu digabung.
-- Satu job berjalan sekaligus (concurrency `scrape`), sisanya mengantre.
 - IP GitHub (Azure) lebih mudah diblokir Google → hasil best-effort (bukan jaminan 100%).
+- Google Sheets dibatasi **10 juta sel/spreadsheet**; hasil sangat besar bisa tertunda/lambat. Drive CSV tetap disediakan.
+- Streaming memunculkan duplikat sementara; dibersihkan saat merge.
 - Public repo: menit Actions gratis; kode + CSV admin publik.
 - Google login opsional; bila `OAUTH_CLIENT_ID` kosong, gunakan API key.

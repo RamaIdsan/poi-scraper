@@ -124,6 +124,7 @@ var INDEX = null;
 var ME = null;
 
 function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" })[c]; }); }
 function showMsg(el, text, ok){ el.textContent = text; el.className = "msg " + (ok ? "ok" : "err"); }
 
 function api(action, payload){
@@ -261,11 +262,18 @@ function submitJob(){
 // ---------- Jobs ----------
 function loadJobs(){
   api("jobs.list", {}).then(function(jobs){
-    var html = "<table><tr><th>Brand</th><th>Negara</th><th>Status</th><th>Progress</th><th>Hasil</th></tr>";
+    var html = "<table><tr><th>Brand</th><th>User</th><th>Status</th><th>Progress</th><th>Target</th><th>Records</th><th>ETA</th><th>Aksi</th></tr>";
     jobs.forEach(function(j){
-      var pill = '<span class="pill ' + j.status + '">' + j.status + '</span>';
-      var dl = j.output_url ? '<a class="dl" href="' + j.output_url + '" target="_blank">unduh</a>' : (j.error ? '<span class="muted" title="'+j.error+'">error</span>' : '<span class="muted">-</span>');
-      html += "<tr><td>" + j.brand + "</td><td>" + j.country + "</td><td>" + pill + "</td><td>" + (j.progress||"-") + "</td><td>" + dl + "</td></tr>";
+      var pill = '<span class="pill ' + esc(j.status) + '">' + esc(j.status) + '</span>';
+      var actions = [];
+      if (j.run_url) actions.push('<a class="dl" href="' + esc(j.run_url) + '" target="_blank">log</a>');
+      if (j.result_url) actions.push('<a class="dl" href="' + esc(j.result_url) + '" target="_blank">tab</a>');
+      if (j.output_url) actions.push('<a class="dl" href="' + esc(j.output_url) + '" target="_blank">csv</a>');
+      if (j.error) actions.push('<span class="muted" title="' + esc(j.error) + '">err</span>');
+      html += "<tr><td>" + esc(j.brand) + "</td><td class='muted'>" + esc(j.user || "") + "</td><td>" + pill +
+        "</td><td>" + esc(j.progress || "-") + "</td><td class='muted'>" + esc(j.current_target || "-") +
+        "</td><td>" + esc(j.records == null ? "-" : j.records) + "</td><td>" + esc(j.eta || "-") +
+        "</td><td>" + (actions.join(" &middot; ") || "-") + "</td></tr>";
     });
     html += "</table>";
     $("jobs").innerHTML = jobs.length ? html : '<p class="muted">Belum ada job.</p>';
@@ -295,7 +303,7 @@ function loadUsers(){
 }
 
 // Auto refresh jobs
-setInterval(function(){ if (ME) loadJobs(); }, 20000);
+setInterval(function(){ if (ME) loadJobs(); }, 10000);
 window.addEventListener("load", initConfig);
 </script>
 </body>
