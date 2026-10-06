@@ -126,6 +126,9 @@
         <span id="quotaBadge" class="chip bg-cyan-500/15 text-cyan-600 dark:text-cyan-300">kuota</span>
         <span id="ver" class="text-[11px] text-slate-400"></span>
       </div>
+      <button id="btnBell" class="btn p-2 rounded-xl glass-soft" title="Notifikasi job selesai" onclick="toggleNotify()">
+        <i data-lucide="bell-off" class="w-4 h-4"></i>
+      </button>
       <button id="btnTheme" class="btn p-2 rounded-xl glass-soft" title="Ganti tema" onclick="toggleTheme()">
         <i data-lucide="moon" class="w-4 h-4"></i>
       </button>
@@ -425,6 +428,9 @@ var JOBS = [];
 var FILTER = { q: "", status: "all" };
 var RELEVANCE = "mirip";
 var RADIUS = "auto";
+var PREV_STATUS = {};
+var FIRST_LOAD = true;
+var NOTIFY_ENABLED = localStorage.getItem("poi_notify") === "1";
 var LAST_REFRESH = null;
 var COUNTDOWN = 10;
 var THEME_KEY = "poi_theme";
@@ -462,6 +468,60 @@ function copyText(text, label){
   try {
     navigator.clipboard.writeText(text).then(function(){ toast((label || "Disalin") + " ke clipboard", "ok"); });
   } catch(e){ toast("Gagal menyalin", "err"); }
+}
+
+function updateBell(){
+  var b = $("btnBell");
+  if (!b) return;
+  b.innerHTML = '<i data-lucide="' + (NOTIFY_ENABLED ? "bell-ring" : "bell-off") + '" class="w-4 h-4"></i>';
+  icons();
+}
+function toggleNotify(){
+  if (!("Notification" in window)){ toast("Browser tidak mendukung notifikasi", "err"); return; }
+  if (NOTIFY_ENABLED){
+    NOTIFY_ENABLED = false;
+    localStorage.setItem("poi_notify", "0");
+    toast("Notifikasi dimatikan", "info");
+    updateBell();
+    return;
+  }
+  Notification.requestPermission().then(function(p){
+    if (p === "granted"){
+      NOTIFY_ENABLED = true;
+      localStorage.setItem("poi_notify", "1");
+      toast("Notifikasi dinyalakan", "ok");
+    } else {
+      toast("Izin notifikasi ditolak browser", "err");
+    }
+    updateBell();
+  });
+}
+function notifyJob(title, body, type){
+  toast(title + (body ? " — " + body : ""), type || "ok");
+  try {
+    if (NOTIFY_ENABLED && "Notification" in window && Notification.permission === "granted"){
+      new Notification(title, { body: body || "" });
+    }
+  } catch(e){}
+}
+function detectTransitions(list){
+  if (FIRST_LOAD){
+    (list || []).forEach(function(j){ PREV_STATUS[j.job_id] = String(j.status || "").toLowerCase(); });
+    FIRST_LOAD = false;
+    return;
+  }
+  (list || []).forEach(function(j){
+    var id = j.job_id;
+    var s = String(j.status || "").toLowerCase();
+    var prev = PREV_STATUS[id];
+    if (prev && prev !== s){
+      if (s === "done") notifyJob("Job selesai: " + j.brand, (j.records || 0) + " records");
+      else if (s === "failed") notifyJob("Job gagal: " + j.brand, j.error || "", "err");
+      else if (s === "paused") notifyJob("Job dijeda: " + j.brand, "", "info");
+      else if (s === "cancelled") notifyJob("Job dibatalkan: " + j.brand, "", "info");
+    }
+    PREV_STATUS[id] = s;
+  });
 }
 
 function openModal(id){ $(id).classList.remove("hidden"); icons(); }
@@ -573,7 +633,7 @@ function tryLogin(){
     if (me.is_admin){ $("adminBox").classList.remove("hidden"); loadUsers(); }
     loadCountry();
     renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
-    renderPresetCards(); renderRadiusCards(); renderRelevanceCards();
+    renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell();
     refreshAll(true);
     startPolling();
     icons();
@@ -1028,10 +1088,27 @@ function jobResume(jobId){
     refreshAll(true);
   }).catch(function(err){ toast("Gagal resume: " + err.message, "err"); });
 }
+function rerunZero(jobId){
+  if (!confirm("Buat job baru untuk mengulang hanya target yang 0 hasil?")) return;
+  api("jobs.rerunZero", { job_id: jobId }).then(function(j){
+    toast("Job ulangan dibuat: " + j.job_id, "ok");
+    closeModal("modalDetail");
+    refreshAll(true);
+  }).catch(function(err){ toast("Gagal: " + err.message, "err"); });
+}
 
 function openDetail(jobId){
-  var job = JOBS.filter(function(x){ return String(x.job_id) === String(jobId); })[0];
-  if (!job){ toast("Job tidak ditemukan", "err"); return; }
+  var job = JOBS.filter(function(x){ return String(x.job_id) === String(jobId); })[0] || { job_id: jobId, brand: "" };
+  $("detailBody").innerHTML = '<div class="text-slate-500 dark:text-slate-400 p-4">Memuat detail...</div>';
+  openModal("modalDetail");
+  api("jobs.get", { job_id: jobId }).then(function(raw){
+    renderDetail(Object.assign({}, job, raw || {}));
+  }).catch(function(err){
+    $("detailBody").innerHTML = '<div class="text-rose-500 p-4">Gagal memuat detail: ' + esc(err.message) + '</div>';
+  });
+}
+
+function renderDetail(job){
   $("detailTitle").textContent = "· " + job.brand;
   var link = $("detailRunLink");
   if (job.run_url){ link.href = job.run_url; link.classList.remove("hidden"); } else { link.classList.add("hidden"); }
@@ -1086,9 +1163,18 @@ function openDetail(jobId){
     keys.forEach(function(k){ html += '<span class="chip glass-soft">' + esc(k) + ': ' + esc(num(agg[k])) + '</span>'; });
     html += '</div></div>';
   }
+  if (!zeroTargets.length && job.zero_targets_json){
+    try {
+      var zj = JSON.parse(job.zero_targets_json);
+      if (Array.isArray(zj)) zeroTargets = zj;
+    } catch(e){}
+  }
   if (zeroTargets.length){
     var shownZero = zeroTargets.slice(0, 100);
-    html += '<div class="mb-4"><div class="font-semibold mb-1">Target 0 hasil (' + zeroTargets.length + ')</div>' +
+    html += '<div class="mb-4"><div class="flex items-center justify-between gap-2 mb-1">' +
+      '<div class="font-semibold">Target 0 hasil (' + zeroTargets.length + ')</div>' +
+      '<button class="btn grad-brand text-white px-3 py-1 text-[11px] inline-flex items-center gap-1" onclick="rerunZero(\'' + esc(job.job_id) + '\')">' +
+      '<i data-lucide="refresh-ccw" class="w-3 h-3"></i> Ulangi hanya target 0 hasil</button></div>' +
       '<div class="text-[11px] text-slate-500 dark:text-slate-400 max-h-40 overflow-auto scroll-thin glass-soft rounded-xl p-2">' +
       shownZero.map(function(z){ return '<div>&bull; ' + esc(z) + '</div>'; }).join('') +
       (zeroTargets.length > shownZero.length ? '<div>&hellip; +' + (zeroTargets.length - shownZero.length) + ' lainnya</div>' : '') +
@@ -1097,14 +1183,21 @@ function openDetail(jobId){
 
   var idxs = Object.keys(chunks).sort(function(a, b){ return Number(a) - Number(b); });
   if (idxs.length){
-    html += '<div class="font-semibold mb-1">Chunk</div><div class="overflow-auto scroll-thin"><table class="w-full text-xs">' +
+    var doneCount = 0;
+    idxs.forEach(function(k){ if (String((chunks[k] || {}).status || "").toLowerCase() === "done") doneCount++; });
+    var denom = total || idxs.length;
+    var covPct = denom ? Math.round((doneCount / denom) * 100) : 0;
+    html += '<div class="font-semibold mb-1">Coverage per wilayah (' + doneCount + '/' + denom + ' chunk &middot; ' + covPct + '%)</div>' +
+      '<div class="h-1.5 rounded-full bg-slate-300/50 dark:bg-slate-700/60 overflow-hidden mb-2"><div class="h-full grad-brand" style="width:' + covPct + '%"></div></div>' +
+      '<div class="overflow-auto scroll-thin"><table class="w-full text-xs">' +
       '<thead><tr class="text-left text-slate-500 dark:text-slate-400 border-b border-slate-300 dark:border-slate-700">' +
-      '<th class="py-1.5 pr-3">#</th><th class="py-1.5 pr-3">Wilayah</th><th class="py-1.5 pr-3">Status</th><th class="py-1.5">Records</th></tr></thead><tbody>';
+      '<th class="py-1.5 pr-3">#</th><th class="py-1.5 pr-3">Wilayah</th><th class="py-1.5 pr-3">Status</th><th class="py-1.5 pr-3">Records</th><th class="py-1.5">Zero</th></tr></thead><tbody>';
     idxs.forEach(function(k){
       var c = chunks[k] || {};
+      var z = (c.stats && c.stats.zero_result_targets) ? c.stats.zero_result_targets : 0;
       html += '<tr class="border-b border-slate-200/50 dark:border-slate-800/50"><td class="py-1.5 pr-3">' + (Number(k) + 1) +
         '</td><td class="py-1.5 pr-3">' + esc(c.label || "-") + '</td><td class="py-1.5 pr-3">' + esc(c.status || "-") +
-        '</td><td class="py-1.5">' + esc(c.records || 0) + '</td></tr>';
+        '</td><td class="py-1.5 pr-3">' + esc(c.records || 0) + '</td><td class="py-1.5">' + esc(z) + '</td></tr>';
     });
     html += '</tbody></table></div>';
   } else {
@@ -1308,6 +1401,7 @@ function refreshAll(silent){
       JOBS = out[0] || [];
       renderJobs();
       renderKPI(out[1]);
+      detectTransitions(JOBS);
       LAST_REFRESH = new Date();
       COUNTDOWN = 10;
       setSyncing(false);
@@ -1486,7 +1580,7 @@ $("brand") && $("brand").addEventListener("keydown", function(e){ if (e.key === 
 window.addEventListener("load", function(){
   applyTheme(localStorage.getItem(THEME_KEY) || "system");
   renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
-  renderPresetCards(); renderRadiusCards(); renderRelevanceCards();
+  renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell();
   icons();
   initConfig();
 });

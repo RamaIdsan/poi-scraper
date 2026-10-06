@@ -43,7 +43,7 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ## 3. Panduan Dashboard (membuat job)
 
-> **Tampilan baru (v2026-10-08.1)**: UI modern dengan Tailwind + Lucide, tema
+> **Tampilan baru (v2026-10-08.4)**: UI modern dengan Tailwind + Lucide, tema
 > gelap/terang (ikut sistem + toggle), 4 kartu KPI, level target berupa kartu pilihan,
 > multi-pilih wilayah berbentuk chip, modal **Preview**, **Logs**, dan **Job Detail**.
 > Konfigurasi Lanjutan kini punya **Preset cakupan** (Cepat/Seimbang/Maksimal),
@@ -189,7 +189,12 @@ Kolom di tabel **Job Saya**:
 
 Tombol **Detail** membuka modal berisi: status, progress total, posisi chunk,
 records/listings, ETA, **statistik filter gabungan semua chunk**
-(relevance/geo/duplicates dst.), daftar **target 0 hasil**, dan tabel status **per chunk**.
+(relevance/geo/duplicates dst.), daftar **target 0 hasil**, **coverage per wilayah**
+(chunk selesai + bar + jumlah Zero per provinsi), dan tombol
+**Ulangi hanya target 0 hasil** (membuat job baru khusus target yang kosong).
+
+**Notifikasi**: tombol lonceng di topbar mengaktifkan notifikasi browser; toast
+otomatis muncul saat job berubah ke `done`/`failed`/`paused`/`cancelled`.
 
 > Dedup hasil memakai **Place_ID** lebih dulu (antar-chunk), lalu fallback
 > brand/nama/alamat/koordinat. Pemanggilan Sheets API di worker di-cache agar
@@ -297,6 +302,7 @@ curl -s -X POST "$WEBAPP_URL" -H "Content-Type: application/json" -d '{
 | `jobs.pause` | `job_id` | Minta pause (berhenti rapi setelah target berjalan) |
 | `jobs.resume` | `job_id` | Lanjutkan job paused/cancelled/failed (lewati chunk selesai) |
 | `jobs.cancel` | `job_id` | Batalkan run di GitHub + status `cancelled` |
+| `jobs.rerunZero` | `job_id` | Buat job baru hanya untuk target 0 hasil |
 | `admin.createKey` | `email`, `quota` | Hanya admin (buat/reset key) |
 | `admin.getKey` | `email` | Hanya admin; ambil API key untuk disalin |
 | `admin.setQuota` | `email`, `quota` | Hanya admin; ubah kuota tanpa reset key |

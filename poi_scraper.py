@@ -1627,6 +1627,18 @@ def spec_to_targets(spec, admin_df, profile):
     mode = spec.get("mode", "unit")
     tile = int(spec.get("tile", 0) or 0)
 
+    explicit = [clean_text(x) for x in (spec.get("explicit_admins") or []) if clean_text(x)]
+    if explicit:
+        out = []
+        seen = set()
+        for adm in explicit:
+            if adm in seen:
+                continue
+            seen.add(adm)
+            lvl = spec.get("level") if spec.get("level") in levels else infer_level_from_admin(adm, profile)
+            out.append({"category": brand, "admin": adm, "level": lvl, "country": country, "tile": tile})
+        return out
+
     current = admin_df
     for parent in levels[:levels.index(level)]:
         name_col = cbl[parent][0]
@@ -1658,7 +1670,7 @@ def plan_chunks(spec, profile, threshold=40):
     """Pecah spec menjadi beberapa chunk per provinsi bila target besar (> threshold)."""
     admin_df = load_admin_data(profile)
     full_targets = spec_to_targets(spec, admin_df, profile)
-    if len(full_targets) <= threshold:
+    if len(full_targets) <= threshold or spec.get("explicit_admins"):
         return [spec], [len(full_targets)]
 
     top_level = profile["levels"][0]

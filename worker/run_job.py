@@ -80,6 +80,27 @@ def _update_chunk_json(job_id, idx, label, status, records, stats=None):
     _safe_update(job_id, {"chunks_json": json.dumps(data, ensure_ascii=False)})
 
 
+def _append_zero_targets(job_id, zero_list):
+    """Akumulasi target 0 hasil ke kolom zero_targets_json (maks 500)."""
+    if not zero_list:
+        return
+    try:
+        raw = cloud.get_job_field(job_id, "zero_targets_json") or ""
+        existing = json.loads(raw) if raw.strip().startswith("[") else []
+        if not isinstance(existing, list):
+            existing = []
+    except Exception:
+        existing = []
+    seen = set(existing)
+    for z in zero_list:
+        z = str(z or "").strip()
+        if z and z not in seen:
+            existing.append(z)
+            seen.add(z)
+    existing = existing[-500:]
+    _safe_update(job_id, {"zero_targets_json": json.dumps(existing, ensure_ascii=False)})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--spec", required=True)
@@ -203,6 +224,7 @@ def main():
         checkpoint = {"chunk_index": chunk_idx, "chunk_label": chunk_label, "reason": stop.mode}
         new_status = "paused" if stop.mode == "pause" else "cancelled"
         flush_remaining()
+        _append_zero_targets(job_id, last_stats[0].get("zero_targets", []))
         _safe_update(job_id, {"status": new_status, "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False)})
         _update_chunk_json(job_id, chunk_idx, chunk_label, new_status, streamed[0], last_stats[0])
         cloud.append_log(job_id, user, f"chunk {chunk_pos} dihentikan ({stop.mode}) pada target terakhir")
@@ -210,6 +232,7 @@ def main():
         return
     except Exception as exc:  # noqa: BLE001
         flush_remaining()
+        _append_zero_targets(job_id, last_stats[0].get("zero_targets", []))
         _safe_update(job_id, {"status": "failed", "error": str(exc)})
         _update_chunk_json(job_id, chunk_idx, chunk_label, "failed", streamed[0], last_stats[0])
         cloud.append_log(job_id, user, f"chunk {chunk_pos} GAGAL: {exc}")
@@ -219,6 +242,7 @@ def main():
     # Flush sisa baris yang belum terkirim.
     flush_remaining()
 
+    _append_zero_targets(job_id, last_stats[0].get("zero_targets", []))
     _update_chunk_json(job_id, chunk_idx, chunk_label, "done", streamed[0], last_stats[0])
     cloud.append_log(
         job_id, user,

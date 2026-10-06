@@ -10,13 +10,13 @@ var JOB_HEADERS = [
   "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error",
   "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url",
   "current_chunk", "total_chunks", "overall_progress", "chunks_json", "filter_stats_json",
-  "run_id", "control", "checkpoint_json", "cancelled_at"
+  "run_id", "control", "checkpoint_json", "cancelled_at", "zero_targets_json"
 ];
 var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-08.3";
+var APP_VERSION = "2026-10-08.4";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -196,12 +196,15 @@ function createJob_(user, payload) {
     result_sheet: resultTab.name,
     params: params
   };
+  if (payload.explicit_admins && payload.explicit_admins.length) {
+    spec.explicit_admins = payload.explicit_admins;
+  }
 
   tab_("Jobs", JOB_HEADERS).appendRow([
     jobId, user.email, country, brand, JSON.stringify(spec),
     "queued", "0%", nowStr_(), "", "", "", "", "",
     resultTab.name, resultTab.gid, "", 0, 0, "", "",
-    "", 0, 0, "{}", "{}", "", "run", "", ""
+    "", 0, 0, "{}", "{}", "", "run", "", "", "[]"
   ]);
   incrementUsed_(user.email);
   try { dispatch(); } catch (e) { log_(jobId, user.email, "dispatch error: " + e); }
@@ -356,6 +359,27 @@ function jobControl_(user, payload, action) {
   }
 
   throw new Error("Aksi tidak dikenal: " + action);
+}
+
+function rerunZero_(user, payload) {
+  var job = getJob_(payload.job_id);
+  if (!job) throw new Error("Job tidak ditemukan.");
+  if (!canAccessJob_(user, job)) throw new Error("Akses ditolak.");
+  var zeros = [];
+  try { zeros = JSON.parse(job.zero_targets_json || "[]") || []; } catch (e) { zeros = []; }
+  if (!zeros.length) throw new Error("Tidak ada target 0 hasil pada job ini.");
+  var origSpec = {};
+  try { origSpec = JSON.parse(job.spec_json || "{}"); } catch (e) { origSpec = {}; }
+  return createJob_(user, {
+    country: job.country,
+    brand: job.brand,
+    level: "",
+    scope: {},
+    mode: "unit",
+    tile: 0,
+    params: origSpec.params || {},
+    explicit_admins: zeros
+  });
 }
 
 function previewJob_(user, payload) {
@@ -658,6 +682,9 @@ function handleAction_(action, payload, ident, isUi) {
     }
     if (action === "jobs.cancel") {
       return { ok: true, data: jobControl_(user, payload, "cancel") };
+    }
+    if (action === "jobs.rerunZero") {
+      return { ok: true, data: rerunZero_(user, payload) };
     }
     if (action === "admin.users") {
       if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
