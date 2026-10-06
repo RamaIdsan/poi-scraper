@@ -224,7 +224,9 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 | **Job lama `queued`** | Antrean penuh atau trigger belum jalan. Jalankan `setupTriggers()`, atau panggil `dispatch()` manual. |
 | **Job `failed`** | Lihat tombol **log** (GitHub Actions) dan tab `Logs`. |
 | **Hasil kosong / sedikit** | Perkecil level target, pakai **Pecah ke unit terkecil**, atau naikkan **Tile density**. Google juga bisa memblokir IP GitHub. |
-| **Tab hasil tidak terisi** | Pastikan service account masih **Editor** di spreadsheet; cek tab `Logs`. |
+| **Tab hasil tidak terisi** | Pastikan service account masih **Editor** di spreadsheet; cek tab `Logs`. Catatan: fitur streaming/kolom detail hanya jalan jika **repo GitHub sudah di-push** (worker terbaru). |
+| **`output_url` kosong / CSV tidak ada** | Folder Drive tidak dishare ke service account atau `DRIVE_FOLDER_ID` salah. Hasil tetap ada di tab `Result_...`; perbaiki share folder lalu jalankan ulang. Worker kini mencoba upload ke akar Drive sebagai fallback dan menulis pesan di kolom `error`. |
+| **Progress format lama `x% (n records) \| a/b`** | Worker di GitHub masih versi lama → `git push origin main` lalu jalankan job baru. |
 | **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |
 
 ---
