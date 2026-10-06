@@ -64,11 +64,12 @@ jobs:
           python worker/run_job.py \
             --spec spec.json \
             --provinsi "${{ matrix.chunk }}" \
-            --chunk-index ${{ strategy.job-index }}
+            --chunk-index ${{ matrix.idx }} \
+            --total-chunks ${{ matrix.total }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: part-${{ strategy.job-index }}
+          name: part-${{ matrix.idx }}
           path: output/Output_*.csv
           if-no-files-found: ignore
 

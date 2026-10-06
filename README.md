@@ -15,7 +15,7 @@ Google Sheet (Users, Jobs, Logs)  <--update--  GitHub Actions (Playwright)
 ## Struktur
 
 ```
-scraper_indonesia.py        # scraper + job-mode (multi-negara)
+poi_scraper.py              # scraper engine + job-mode (Indonesia & Philippines)
 admin/build_index.py        # generator dropdown
 admin/id_index.json         # index Indonesia
 admin/ph_index.json         # index Philippines
@@ -32,12 +32,12 @@ apps-script/                # Code.gs, Index.html, appsscript.json
 
 Interaktif:
 ```
-python scraper_indonesia.py
+python poi_scraper.py
 ```
 
 Job-mode (non-interaktif):
 ```
-python scraper_indonesia.py --job spec.json
+python poi_scraper.py --job spec.json
 ```
 Contoh `spec.json`:
 ```json

@@ -8,13 +8,15 @@
 var JOB_HEADERS = [
   "job_id", "user", "country", "brand", "spec_json", "status", "progress",
   "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error",
-  "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url"
+  "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url",
+  "current_chunk", "total_chunks", "overall_progress", "chunks_json", "filter_stats_json",
+  "run_id", "control", "checkpoint_json", "cancelled_at"
 ];
 var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-07.1";
+var APP_VERSION = "2026-10-08.1";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -168,6 +170,18 @@ function createJob_(user, payload) {
   if (!brand) throw new Error("Brand wajib diisi.");
   if (country !== "indonesia" && country !== "philippines") throw new Error("Negara tidak dikenal.");
 
+  var rawParams = payload.params || {};
+  var relMode = String(rawParams.relevance_mode || "mirip").toLowerCase();
+  if (["persis", "mirip", "longgar"].indexOf(relMode) < 0) relMode = "mirip";
+  var params = {
+    filter_relevance: rawParams.filter_relevance !== false,
+    relevance_mode: relMode,
+    keep_no_coords: !!rawParams.keep_no_coords,
+    headless: true
+  };
+  var radius = Number(rawParams.radius_km);
+  if (!isNaN(radius) && radius > 0) params.radius_km = Math.max(1, Math.min(300, radius));
+
   var jobId = Utilities.getUuid();
   var resultTab = makeResultTab_(brand, jobId);
   var spec = {
@@ -180,13 +194,14 @@ function createJob_(user, payload) {
     mode: payload.mode || "unit",
     tile: Number(payload.tile || 0),
     result_sheet: resultTab.name,
-    params: payload.params || { filter_relevance: true, headless: true }
+    params: params
   };
 
   tab_("Jobs", JOB_HEADERS).appendRow([
     jobId, user.email, country, brand, JSON.stringify(spec),
     "queued", "0%", nowStr_(), "", "", "", "", "",
-    resultTab.name, resultTab.gid, "", 0, 0, "", ""
+    resultTab.name, resultTab.gid, "", 0, 0, "", "",
+    "", 0, 0, "{}", "{}", "", "run", "", ""
   ]);
   incrementUsed_(user.email);
   try { dispatch(); } catch (e) { log_(jobId, user.email, "dispatch error: " + e); }
@@ -229,7 +244,10 @@ function listJobs_(user) {
       finished_at: fmtVal_(j.finished_at), output_url: j.output_url || "", error: fmtVal_(j.error),
       current_target: j.current_target || "", listings_found: j.listings_found || 0,
       records: j.records || 0, eta: j.eta || "", run_url: j.run_url || "",
-      result_sheet: j.result_sheet || "", result_url: tabUrl
+      result_sheet: j.result_sheet || "", result_url: tabUrl,
+      current_chunk: j.current_chunk || "", total_chunks: Number(j.total_chunks || 0),
+      overall_progress: Number(j.overall_progress || 0), chunks_json: j.chunks_json || "",
+      filter_stats_json: j.filter_stats_json || ""
     };
   });
 }

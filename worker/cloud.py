@@ -12,6 +12,9 @@ SCOPES = [
 JOB_COLUMNS = [
     "job_id", "user", "country", "brand", "spec_json", "status", "progress",
     "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error",
+    "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url",
+    "current_chunk", "total_chunks", "overall_progress", "chunks_json", "filter_stats_json",
+    "run_id", "control", "checkpoint_json", "cancelled_at",
 ]
 COL_INDEX = {name: i for i, name in enumerate(JOB_COLUMNS)}
 SHEET_NAME = "Jobs"
@@ -77,6 +80,23 @@ def update_job(job_id, fields):
             body={"valueInputOption": "RAW", "data": data},
         ).execute()
     return True
+
+
+def get_job_field(job_id, field):
+    """Baca satu kolom job berdasarkan job_id (untuk kontrol pause/stop)."""
+    if not job_id or field not in COL_INDEX:
+        return ""
+    sheet_id = os.environ.get("SHEET_ID")
+    if not sheet_id:
+        return ""
+    sheets, row = find_job_row(sheet_id, job_id)
+    if row is None:
+        return ""
+    col = _col_letter(COL_INDEX[field])
+    values = sheets.spreadsheets().values().get(
+        spreadsheetId=sheet_id, range=f"{SHEET_NAME}!{col}{row}"
+    ).execute().get("values", [])
+    return values[0][0] if values and values[0] else ""
 
 
 LOG_TAB = "Logs"

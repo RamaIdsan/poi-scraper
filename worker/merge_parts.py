@@ -11,7 +11,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import scraper_indonesia as s  # noqa: E402
+import poi_scraper as s  # noqa: E402
 import cloud  # noqa: E402
 
 DEDUP_KEYS = [
@@ -77,6 +77,7 @@ def main():
     cloud.update_job(job_id, {
         "status": status,
         "progress": f"100% ({len(full)} records)",
+        "overall_progress": 100,
         "finished_at": finished,
         "output_file_id": file_id,
         "output_url": link,

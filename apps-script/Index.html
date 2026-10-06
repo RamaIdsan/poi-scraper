@@ -239,6 +239,33 @@
                   Menambah titik pencarian grid tiap target (3x3 = 9, 5x5 = 25). Pakai bila hasil kurang lengkap.
                 </p>
               </div>
+              <div>
+                <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">Preset cakupan</div>
+                <div id="presetCards" class="grid grid-cols-3 gap-2"></div>
+                <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                  Mengatur mode, tile, radius, dan filter sekaligus. Wilayah & level tetap pilihan Anda.
+                </p>
+              </div>
+              <div>
+                <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">Radius geo-filter</div>
+                <div id="radiusCards" class="grid grid-cols-2 gap-2"></div>
+                <input id="radiusManual" type="number" min="1" max="300" placeholder="km (1-300)"
+                  class="hidden w-full mt-2 px-3 py-2 rounded-xl glass-soft text-sm">
+                <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                  Auto = per level (provinsi 150 · kota 40 · kecamatan 15 · kelurahan 5 km). Manual untuk override.
+                </p>
+              </div>
+              <div>
+                <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">Mode pencarian (filter brand)</div>
+                <div id="relevanceCards" class="grid grid-cols-3 gap-2"></div>
+                <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                  <b>Persis</b> = nama harus memuat brand · <b>Mirip</b> = lentur (default) · <b>Longgar</b> = tanpa filter.
+                </p>
+              </div>
+              <label class="flex items-center gap-2 text-sm">
+                <input id="keepNoCoords" type="checkbox" class="accent-cyan-500">
+                Simpan listing tanpa koordinat (tetap diambil, tidak dibuang filter radius)
+              </label>
             </div>
           </details>
 
@@ -372,6 +399,20 @@
   </div>
 </div>
 
+<div id="modalDetail" class="hidden fixed inset-0 z-[120]">
+  <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalDetail')"></div>
+  <div class="relative glass rounded-2xl max-w-4xl mx-auto mt-10 mb-10 p-5 shadow-2xl max-h-[85vh] flex flex-col">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-bold flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4"></i> Job Detail <span id="detailTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
+      <div class="flex gap-2">
+        <a id="detailRunLink" class="btn px-3 py-1.5 glass-soft text-xs hidden" target="_blank" href="#">Buka GitHub</a>
+        <button class="btn p-1.5 glass-soft" onclick="closeModal('modalDetail')"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+    </div>
+    <div id="detailBody" class="overflow-auto scroll-thin text-sm"></div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    STATE
@@ -382,6 +423,8 @@ var INDEX = null;
 var ME = null;
 var JOBS = [];
 var FILTER = { q: "", status: "all" };
+var RELEVANCE = "mirip";
+var RADIUS = "auto";
 var LAST_REFRESH = null;
 var COUNTDOWN = 10;
 var THEME_KEY = "poi_theme";
@@ -424,7 +467,7 @@ function copyText(text, label){
 function openModal(id){ $(id).classList.remove("hidden"); icons(); }
 function closeModal(id){ $(id).classList.add("hidden"); }
 document.addEventListener("keydown", function(e){
-  if (e.key === "Escape"){ ["modalPreview","modalLogs","modalDiag"].forEach(closeModal); }
+  if (e.key === "Escape"){ ["modalPreview","modalLogs","modalDiag","modalDetail"].forEach(closeModal); }
 });
 
 function humanizeDuration(sec){
@@ -530,6 +573,7 @@ function tryLogin(){
     if (me.is_admin){ $("adminBox").classList.remove("hidden"); loadUsers(); }
     loadCountry();
     renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
+    renderPresetCards(); renderRadiusCards(); renderRelevanceCards();
     refreshAll(true);
     startPolling();
     icons();
@@ -911,6 +955,116 @@ function renderTileCards(){
 }
 function setTile(v){ $("tile").value = v; renderTileCards(); recalc(); }
 
+var PRESETS = {
+  cepat: { mode: "unit", tile: "0", relevance: "mirip", radius: "auto", keep: false },
+  seimbang: { mode: "unit", tile: "0", relevance: "mirip", radius: "auto", keep: true },
+  maksimal: { mode: "expand", tile: "0", relevance: "mirip", radius: "auto", keep: true }
+};
+
+function renderPresetCards(){
+  var host = $("presetCards");
+  if (!host) return;
+  var items = [
+    { v: "cepat", label: "Cepat", icon: "zap" },
+    { v: "seimbang", label: "Seimbang", icon: "scale" },
+    { v: "maksimal", label: "Maksimal", icon: "maximize" }
+  ];
+  host.innerHTML = items.map(function(it){
+    return '<button class="btn py-2 text-xs rounded-xl glass-soft border border-transparent hover:border-cyan-500/50" onclick="applyPreset(\'' + it.v + '\')">' +
+      '<span class="inline-flex items-center gap-1"><i data-lucide="' + it.icon + '" class="w-3 h-3"></i>' + it.label + '</span></button>';
+  }).join("");
+  icons();
+}
+function applyPreset(name){
+  var p = PRESETS[name];
+  if (!p) return;
+  setMode(p.mode); setTile(p.tile); setRelevance(p.relevance); setRadius(p.radius);
+  if ($("keepNoCoords")) $("keepNoCoords").checked = p.keep;
+  toast("Preset " + name + " diterapkan", "info");
+}
+
+function renderRadiusCards(){
+  var host = $("radiusCards");
+  if (!host) return;
+  var items = [{ v: "auto", label: "Auto" }, { v: "manual", label: "Manual" }];
+  host.innerHTML = items.map(function(it){
+    var active = RADIUS === it.v;
+    return '<button class="btn py-2 text-sm rounded-xl border ' + (active ? "border-cyan-500 bg-cyan-500/10 font-semibold" : "glass-soft border-transparent") +
+      '" onclick="setRadius(\'' + it.v + '\')">' + it.label + '</button>';
+  }).join("");
+  var inp = $("radiusManual");
+  if (inp) inp.classList.toggle("hidden", RADIUS !== "manual");
+}
+function setRadius(v){ RADIUS = v; renderRadiusCards(); }
+
+function renderRelevanceCards(){
+  var host = $("relevanceCards");
+  if (!host) return;
+  var items = [{ v: "persis", label: "Persis" }, { v: "mirip", label: "Mirip" }, { v: "longgar", label: "Longgar" }];
+  host.innerHTML = items.map(function(it){
+    var active = RELEVANCE === it.v;
+    return '<button class="btn py-2 text-xs rounded-xl border ' + (active ? "border-cyan-500 bg-cyan-500/10 font-semibold" : "glass-soft border-transparent") +
+      '" onclick="setRelevance(\'' + it.v + '\')">' + it.label + '</button>';
+  }).join("");
+}
+function setRelevance(v){ RELEVANCE = v; renderRelevanceCards(); }
+
+function openDetail(jobId){
+  var job = JOBS.filter(function(x){ return String(x.job_id) === String(jobId); })[0];
+  if (!job){ toast("Job tidak ditemukan", "err"); return; }
+  $("detailTitle").textContent = "· " + job.brand;
+  var link = $("detailRunLink");
+  if (job.run_url){ link.href = job.run_url; link.classList.remove("hidden"); } else { link.classList.add("hidden"); }
+
+  var st = {};
+  try { st = JSON.parse(job.filter_stats_json || "{}") || {}; } catch(e){ st = {}; }
+  var chunks = {};
+  try { chunks = JSON.parse(job.chunks_json || "{}") || {}; } catch(e){ chunks = {}; }
+  var overall = Number(job.overall_progress || 0);
+  var total = Number(job.total_chunks || 0);
+
+  function box(label, val){
+    return '<div class="glass-soft rounded-xl p-3"><div class="text-[10px] uppercase text-slate-500 dark:text-slate-400">' + label +
+      '</div><div class="font-bold">' + val + '</div></div>';
+  }
+  var html = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">';
+  html += box("Status", esc(job.status || "-"));
+  html += box("Progress total", overall.toFixed(1) + "%");
+  html += box("Chunk", esc(job.current_chunk || "-") + (total ? " / " + total : ""));
+  html += box("Records", esc(job.records == null ? "-" : num(job.records)));
+  html += box("Listings", esc(job.listings_found == null ? "-" : num(job.listings_found)));
+  html += box("Target saat ini", '<span class="text-xs">' + esc(job.current_target || "-") + '</span>');
+  html += box("ETA", esc(job.eta || "-"));
+  html += box("Selesai/Update", esc(job.finished_at || job.created_at || "-"));
+  html += '</div>';
+
+  var keys = Object.keys(st);
+  if (keys.length){
+    html += '<div class="mb-4"><div class="font-semibold mb-1">Statistik filter</div><div class="flex flex-wrap gap-2">';
+    keys.forEach(function(k){ html += '<span class="chip glass-soft">' + esc(k) + ': ' + esc(st[k]) + '</span>'; });
+    html += '</div></div>';
+  }
+
+  var idxs = Object.keys(chunks).sort(function(a, b){ return Number(a) - Number(b); });
+  if (idxs.length){
+    html += '<div class="font-semibold mb-1">Chunk</div><div class="overflow-auto scroll-thin"><table class="w-full text-xs">' +
+      '<thead><tr class="text-left text-slate-500 dark:text-slate-400 border-b border-slate-300 dark:border-slate-700">' +
+      '<th class="py-1.5 pr-3">#</th><th class="py-1.5 pr-3">Wilayah</th><th class="py-1.5 pr-3">Status</th><th class="py-1.5">Records</th></tr></thead><tbody>';
+    idxs.forEach(function(k){
+      var c = chunks[k] || {};
+      html += '<tr class="border-b border-slate-200/50 dark:border-slate-800/50"><td class="py-1.5 pr-3">' + (Number(k) + 1) +
+        '</td><td class="py-1.5 pr-3">' + esc(c.label || "-") + '</td><td class="py-1.5 pr-3">' + esc(c.status || "-") +
+        '</td><td class="py-1.5">' + esc(c.records || 0) + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  } else {
+    html += '<div class="text-xs text-slate-500 dark:text-slate-400">Belum ada data chunk.</div>';
+  }
+
+  $("detailBody").innerHTML = html;
+  openModal("modalDetail");
+}
+
 function renderBrandChips(){
   var host = $("brandChips");
   if (!host) return;
@@ -991,14 +1145,22 @@ function statusBadge(j){
 }
 
 function progressCell(j){
-  var pct = 0;
-  var m = String(j.progress || "").match(/([\d.]+)\s*%/);
-  if (m) pct = Math.min(100, Number(m[1]));
+  var total = Number(j.total_chunks || 0);
+  var overall = Number(j.overall_progress || 0);
+  var pct = overall;
+  if (total <= 1){
+    var m = String(j.progress || "").match(/([\d.]+)\s*%/);
+    if (m) pct = Number(m[1]);
+  }
+  pct = Math.max(0, Math.min(100, pct));
   var running = String(j.status || "").toLowerCase() === "running" || String(j.status || "").toLowerCase() === "dispatched";
-  return '<div class="flex items-center gap-2 min-w-[130px]">' +
+  var label = total > 1
+    ? ("Chunk " + esc(j.current_chunk || "-") + " · " + pct.toFixed(1) + "%")
+    : esc(j.progress || "-");
+  return '<div class="flex items-center gap-2 min-w-[170px]">' +
     '<div class="flex-1 h-1.5 rounded-full bg-slate-300/50 dark:bg-slate-700/60 overflow-hidden">' +
     '<div class="h-full grad-brand" style="width:' + pct + '%;transition:width .4s"></div></div>' +
-    '<span class="text-[11px] ' + (running ? "text-sky-500 font-semibold" : "text-slate-500 dark:text-slate-400") + '">' + esc(j.progress || "-") + '</span>' +
+    '<span class="text-[11px] ' + (running ? "text-sky-500 font-semibold" : "text-slate-500 dark:text-slate-400") + '">' + label + '</span>' +
     '</div>';
 }
 
@@ -1011,6 +1173,7 @@ function actionButtons(j){
   var csvUrl = j.output_url || "";
   if (!csvUrl && j.result_url) csvUrl = j.result_url.replace("/edit#gid=", "/export?format=csv&gid=");
   if (csvUrl) html += '<a href="' + esc(csvUrl) + '" target="_blank" class="btn px-2 py-1 text-[11px] glass-soft inline-flex items-center gap-1"><i data-lucide="download" class="w-3 h-3"></i>CSV</a>';
+  html += '<button class="btn px-2 py-1 text-[11px] glass-soft inline-flex items-center gap-1" onclick="openDetail(\'' + esc(j.job_id) + '\')"><i data-lucide="activity" class="w-3 h-3"></i>Detail</button>';
   html += '</div>';
   return html;
 }
@@ -1110,13 +1273,17 @@ function startPolling(){
    ============================================================ */
 function submitJob(ev){
   if (ev) ripple(ev);
+  var params = { relevance_mode: RELEVANCE, keep_no_coords: !!($("keepNoCoords") && $("keepNoCoords").checked) };
+  var r = Number($("radiusManual") ? $("radiusManual").value : 0);
+  if (RADIUS === "manual" && r > 0) params.radius_km = Math.max(1, Math.min(300, r));
   var payload = {
     country: $("country").value,
     brand: $("brand").value.trim(),
     level: $("level").value,
     scope: currentScope(),
     mode: $("mode").value,
-    tile: Number($("tile").value)
+    tile: Number($("tile").value),
+    params: params
   };
   if (!payload.brand){ showMsg($("jobMsg"), "Brand wajib diisi.", false); return; }
   showMsg($("jobMsg"), "Mengirim job...", true);
@@ -1215,6 +1382,7 @@ $("brand") && $("brand").addEventListener("keydown", function(e){ if (e.key === 
 window.addEventListener("load", function(){
   applyTheme(localStorage.getItem(THEME_KEY) || "system");
   renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
+  renderPresetCards(); renderRadiusCards(); renderRelevanceCards();
   icons();
   initConfig();
 });

@@ -1,7 +1,7 @@
 """Jalankan satu chunk job scraping + streaming hasil ke tab + update Sheet.
 
 Dipakai oleh GitHub Actions:
-  python worker/run_job.py --spec spec.json --provinsi "Abra" --chunk-index 0
+  python worker/run_job.py --spec spec.json --provinsi "Abra" --chunk-index 0 --total-chunks 81
 """
 import argparse
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import scraper_indonesia as s  # noqa: E402
+import poi_scraper as s  # noqa: E402
 import cloud  # noqa: E402
 
 STREAM_INTERVAL = 20  # detik
@@ -46,11 +46,25 @@ def _run_url():
     return ""
 
 
+def _update_chunk_json(job_id, idx, label, status, records):
+    """Catat status tiap chunk di kolom chunks_json (chunk berjalan serial)."""
+    try:
+        raw = cloud.get_job_field(job_id, "chunks_json") or ""
+        data = json.loads(raw) if raw.strip().startswith("{") else {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    data[str(idx)] = {"label": label, "status": status, "records": records}
+    _safe_update(job_id, {"chunks_json": json.dumps(data, ensure_ascii=False)})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--spec", required=True)
     parser.add_argument("--provinsi", default="")
     parser.add_argument("--chunk-index", type=int, default=None)
+    parser.add_argument("--total-chunks", type=int, default=1)
     args = parser.parse_args()
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8-sig"))
@@ -60,16 +74,21 @@ def main():
     result_sheet = spec.get("result_sheet", "") or f"Result_{job_id}"
     headers = list(s.OUTPUT_COLUMNS)
 
+    chunk_idx = args.chunk_index if args.chunk_index is not None else 0
+    total_chunks = max(1, int(args.total_chunks or 1))
+    chunk_label = args.provinsi or "semua"
+    chunk_pos = f"{chunk_idx + 1}/{total_chunks}"
+
     if args.provinsi:
         spec.setdefault("scope", {})
         spec["scope"][profile["levels"][0]] = [args.provinsi]
-    if args.chunk_index is not None:
-        spec["chunk_index"] = args.chunk_index
+    spec["chunk_index"] = chunk_idx
+    spec["total_chunks"] = total_chunks
     spec["output_dir"] = "output"
 
     out_dir = Path("output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    spec_file = out_dir / f"spec_chunk_{args.chunk_index if args.chunk_index is not None else 0}.json"
+    spec_file = out_dir / f"spec_chunk_{chunk_idx}.json"
     spec_file.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
 
     try:
@@ -82,8 +101,11 @@ def main():
         "status": "running",
         "started_at": started,
         "run_url": _run_url(),
+        "current_chunk": chunk_pos,
+        "total_chunks": total_chunks,
     })
-    cloud.append_log(job_id, user, f"chunk {args.chunk_index} mulai (provinsi='{args.provinsi or 'semua'}')")
+    _update_chunk_json(job_id, chunk_idx, chunk_label, "running", 0)
+    cloud.append_log(job_id, user, f"chunk {chunk_pos} mulai (wilayah='{chunk_label}')")
 
     start_ts = time.time()
     last_emit = [0.0]
@@ -96,17 +118,22 @@ def main():
         if now - last_emit[0] < 15:
             return
         last_emit[0] = now
-        progress = round((current / total) * 100, 2) if total else 100.0
+        local = (current / total) if total else 1.0
+        overall = round(((chunk_idx + local) / total_chunks) * 100, 2)
         elapsed = now - start_ts
         eta = (elapsed / current) * (total - current) if current > 0 else 0
         _safe_update(job_id, {
-            "progress": f"{progress}%",
+            "progress": f"chunk {chunk_pos} · {round(local * 100, 1)}%",
+            "overall_progress": overall,
+            "current_chunk": chunk_pos,
+            "total_chunks": total_chunks,
             "current_target": admin,
             "listings_found": stats.get("listings_found", 0),
             "records": scraped,
             "eta": _fmt_eta(eta),
+            "filter_stats_json": json.dumps(stats, ensure_ascii=False),
         })
-        print(f"PROGRESS {progress}% ({scraped} records) {current}/{total} | {admin}", flush=True)
+        print(f"PROGRESS overall={overall}% chunk={chunk_pos} local={round(local*100,1)}% ({scraped} records) {current}/{total} | {admin}", flush=True)
 
     def on_data(data):
         last_data[0] = data
@@ -128,7 +155,8 @@ def main():
         manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data)
     except Exception as exc:  # noqa: BLE001
         _safe_update(job_id, {"status": "failed", "error": str(exc)})
-        cloud.append_log(job_id, user, f"chunk {args.chunk_index} GAGAL: {exc}")
+        _update_chunk_json(job_id, chunk_idx, chunk_label, "failed", streamed[0])
+        cloud.append_log(job_id, user, f"chunk {chunk_pos} GAGAL: {exc}")
         print(f"ERROR {exc}", flush=True)
         raise
 
@@ -142,9 +170,10 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"WARN flush akhir gagal: {exc}")
 
+    _update_chunk_json(job_id, chunk_idx, chunk_label, "done", streamed[0])
     cloud.append_log(
         job_id, user,
-        f"chunk {args.chunk_index} selesai: {manifest.get('records', 0)} records, {manifest.get('targets', 0)} target",
+        f"chunk {chunk_pos} selesai: {manifest.get('records', 0)} records, {manifest.get('targets', 0)} target",
     )
     print("CHUNK_DONE " + json.dumps(manifest, ensure_ascii=False), flush=True)
 

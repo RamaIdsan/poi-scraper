@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import scraper_indonesia as s  # noqa: E402
+import poi_scraper as s  # noqa: E402
 
 
 def main():
@@ -23,12 +23,19 @@ def main():
     chunks, counts = s.plan_chunks(spec, profile, threshold=args.threshold)
 
     if len(chunks) == 1:
-        matrix = {"chunk": [""]}
+        labels = [""]
     else:
         top_level = profile["levels"][0]
-        matrix = {"chunk": [c["scope"][top_level][0] for c in chunks]}
+        labels = [c["scope"][top_level][0] for c in chunks]
 
-    print(json.dumps({"matrix": matrix, "chunks": len(chunks), "counts": counts}, ensure_ascii=False))
+    n = len(labels)
+    matrix = {
+        "chunk": labels,
+        "idx": list(range(n)),
+        "total": [n] * n,
+    }
+
+    print(json.dumps({"matrix": matrix, "chunks": n, "counts": counts}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

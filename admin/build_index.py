@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import scraper_indonesia as s  # noqa: E402
+import poi_scraper as s  # noqa: E402
 
 
 SEP = "\u0001"

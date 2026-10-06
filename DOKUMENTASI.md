@@ -43,10 +43,12 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ## 3. Panduan Dashboard (membuat job)
 
-> **Tampilan baru (v2026-10-07.1)**: UI modern dengan Tailwind + Lucide, tema
+> **Tampilan baru (v2026-10-08.1)**: UI modern dengan Tailwind + Lucide, tema
 > gelap/terang (ikut sistem + toggle), 4 kartu KPI, level target berupa kartu pilihan,
-> multi-pilih wilayah berbentuk chip, modal **Preview Data** & **Logs** bergaya terminal,
-> serta notifikasi toast.
+> multi-pilih wilayah berbentuk chip, modal **Preview**, **Logs**, dan **Job Detail**.
+> Konfigurasi Lanjutan kini punya **Preset cakupan** (Cepat/Seimbang/Maksimal),
+> **Radius geo-filter** (Auto/Manual 1–300 km), **Mode pencarian** (Persis/Mirip/Longgar),
+> dan opsi **simpan listing tanpa koordinat**.
 
 ### 3.1 Negara
 `Indonesia` atau `Philippines`. Menentukan data wilayah admin yang dipakai:
@@ -179,11 +181,15 @@ Kolom di tabel **Job Saya**:
 | Brand | Kata kunci job |
 | User | Pemilik job (admin melihat semua) |
 | Status | Lihat tabel status di atas |
-| Progress | Persentase target yang selesai |
+| Progress | Untuk job ber-chunk: `Chunk x/y · z%` (progress **gabungan** dari seluruh chunk) |
 | Target | Wilayah yang sedang diproses |
 | Records | Jumlah POI yang sudah tersimpan |
 | ETA | Perkiraan sisa waktu |
-| Aksi | **log** = log GitHub Actions; **tab** = tab hasil; **csv** = unduh CSV |
+| Aksi | **Logs** · **Tab** · **Preview** · **CSV** · **Detail** |
+
+Tombol **Detail** membuka modal berisi: status, progress total, posisi chunk,
+records/listings, ETA, **statistik filter** (relevance/geo/duplicates dst.),
+dan tabel status **per chunk**.
 
 Tabel menyegar otomatis setiap 10 detik.
 
@@ -202,6 +208,8 @@ Tabel menyegar otomatis setiap 10 detik.
      export URL dari tab hasil sehingga tetap bisa diunduh.
 3. **Tab `Logs`**: catatan milestone (mulai chunk, selesai, error).
 4. **Log lengkap** ada di GitHub Actions (tombol **log**).
+5. **Kolom output tambahan** (untuk audit): `Place_ID`, `Country`, `Level`,
+   `Query_Target`, `Source_URL`, `Scraped_At`.
 
 > Batas Google Sheets: **10 juta sel/spreadsheet**. Untuk hasil sangat besar, gunakan
 > CSV Drive.
@@ -321,7 +329,7 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 ## 11. Struktur repo
 
 ```
-scraper_indonesia.py   # scraper + job-mode
+poi_scraper.py         # scraper + job-mode
 admin/build_index.py   # generator index dropdown
 admin/id_index.json    # index Indonesia (provinsi/kota/kecamatan)
 admin/ph_index.json    # index Philippines (province/city)

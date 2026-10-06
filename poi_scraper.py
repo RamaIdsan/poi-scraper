@@ -32,6 +32,12 @@ OUTPUT_COLUMNS = [
     "Business_Status_geocode",
     "Website_geocode",
     "Payment_geocode",
+    "Place_ID",
+    "Country",
+    "Level",
+    "Query_Target",
+    "Source_URL",
+    "Scraped_At",
 ]
 
 DAY_MAP = {
@@ -672,7 +678,7 @@ def ask_tile_factor(targets):
 # ============================================================
 # INPUT / CHECKPOINT / LOGGING
 # ============================================================
-def read_target_file(filename, default_country="indonesia"):
+def read_target_file(filename, default_country=None):
     path = Path(filename)
     if not path.exists():
         raise FileNotFoundError(f"Input file tidak ditemukan: {filename}")
@@ -700,13 +706,20 @@ def read_target_file(filename, default_country="indonesia"):
             f"Kolom yang ditemukan: {list(df.columns)}"
         )
 
+    if country_col is None and not default_country:
+        raise ValueError(
+            "Input membutuhkan kolom 'country' (indonesia/philippines). "
+            "File target yang dibuat dashboard selalu menyertakannya."
+        )
+
     out = pd.DataFrame()
     out["category"] = df[category_col].fillna("").map(clean_text)
     out["admin"] = df[admin_col].fillna("").map(clean_text)
     out["country"] = (
         df[country_col].fillna("").map(lambda x: clean_text(x).lower()) if country_col else default_country
     )
-    out["country"] = out["country"].apply(lambda c: c if c in COUNTRY_PROFILES else default_country)
+    fallback_country = default_country or "indonesia"
+    out["country"] = out["country"].apply(lambda c: c if c in COUNTRY_PROFILES else fallback_country)
     out["level"] = df[level_col].fillna("").map(clean_text) if level_col else ""
     out["level"] = out.apply(
         lambda r: r["level"] if r["level"] in COUNTRY_PROFILES[r["country"]]["levels"]
@@ -891,7 +904,20 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def looks_like_country(address, profile):
+def build_country_vocab(admin_df):
+    """Bangun kosakata nama wilayah (provinsi+kota) dari data admin untuk country filter."""
+    terms = set()
+    for col in ("provinsi", "kota"):
+        if col in getattr(admin_df, "columns", []):
+            for value in admin_df[col].dropna().unique():
+                for token in str(value).lower().split():
+                    token = re.sub(r"[^a-z0-9]", "", token)
+                    if len(token) > 2:
+                        terms.add(token)
+    return terms
+
+
+def looks_like_country(address, profile, extra_terms=None):
     """Fallback country check used when coordinates could not be resolved."""
     text = normalize_for_match(address)
     if not text:
@@ -899,17 +925,24 @@ def looks_like_country(address, profile):
     tokens = set(text.split())
     if tokens & set(profile["reject_terms"]):
         return False
-    return bool(tokens & set(profile["accept_terms"]))
+    accept = set(profile["accept_terms"])
+    if extra_terms:
+        accept |= set(extra_terms)
+    return bool(tokens & accept)
 
 
-def relevance_ok(expected_brand, name):
-    """Lenient brand match: substring, compact (ignores spaces), or token overlap."""
+def relevance_ok(expected_brand, name, mode="mirip"):
+    """Brand match. mode: 'persis' = substring saja, 'mirip' = lentur, 'longgar' = tanpa filter."""
+    if mode == "longgar":
+        return True
     exp_norm = normalize_for_match(expected_brand)
     name_norm = normalize_for_match(name)
     if not exp_norm:
         return True
     if exp_norm in name_norm:
         return True
+    if mode == "persis":
+        return False
     exp_compact = exp_norm.replace(" ", "")
     name_compact = name_norm.replace(" ", "")
     if exp_compact and exp_compact in name_compact:
@@ -1093,7 +1126,7 @@ def scrape_payment(page):
     return ", ".join(payment_values)
 
 
-def scrape_listing(page, expected_brand="", filter_relevance=False, logger=None):
+def scrape_listing(page, expected_brand="", filter_relevance=False, relevance_mode="mirip", logger=None):
     try:
         current_url = canonical_url(page.url)
         latitude, longitude = extract_lat_long_from_url(current_url)
@@ -1158,7 +1191,7 @@ def scrape_listing(page, expected_brand="", filter_relevance=False, logger=None)
         status = scrape_status(page)
         payment = scrape_payment(page)
 
-        if filter_relevance and not relevance_ok(expected_brand, name):
+        if filter_relevance and not relevance_ok(expected_brand, name, relevance_mode):
             return None, {
                 "reason": "relevance_filter_not_contains",
                 "name": name,
@@ -1181,6 +1214,7 @@ def scrape_listing(page, expected_brand="", filter_relevance=False, logger=None)
             "website": website,
             "payment": payment,
             "url": current_url,
+            "place_id": extract_place_id(current_url),
         }, None
 
     except Exception as exc:
@@ -1210,7 +1244,7 @@ def record_signature(scraped):
     lat = scraped.get("latitude")
     lon = scraped.get("longitude")
     if name and lat is not None and lon is not None:
-        return ("geo", name, round(float(lat), 3), round(float(lon), 3))
+        return ("geo", name, round(float(lat), 4), round(float(lon), 4))
 
     return ("legacy",) + legacy_identity(name, scraped.get("address", ""), scraped.get("category", ""))
 
@@ -1231,7 +1265,7 @@ def build_seen_sets(data):
         norm_name = normalize_for_match(name)
         try:
             if norm_name and lat and lon:
-                seen_sig.add(("geo", norm_name, round(float(lat), 3), round(float(lon), 3)))
+                seen_sig.add(("geo", norm_name, round(float(lat), 4), round(float(lon), 4)))
         except (TypeError, ValueError):
             pass
     return seen_legacy, seen_sig
@@ -1258,6 +1292,9 @@ def main(
     admin_radius_km,
     progress_cb=None,
     data_cb=None,
+    relevance_mode="mirip",
+    keep_no_coords=False,
+    country_vocab=None,
 ):
     df = read_target_file(input_file)
     total_rows = len(df)
@@ -1418,7 +1455,8 @@ def main(
                         dismiss_common_popups(detail_page)
 
                         scraped, error = scrape_listing(
-                            detail_page, expected_brand=category, filter_relevance=filter_relevance, logger=logger
+                            detail_page, expected_brand=category, filter_relevance=filter_relevance,
+                            relevance_mode=relevance_mode, logger=logger
                         )
 
                         if error:
@@ -1438,15 +1476,19 @@ def main(
                                 target_lat, target_lon,
                                 scraped["latitude"], scraped["longitude"]
                             )
-                            if distance_km is None or distance_km > radius_km:
+                            if distance_km is None:
+                                if not keep_no_coords:
+                                    stats["geo_filtered"] += 1
+                                    logger.info(f"Geo-filter: REJECT '{name}' | tanpa koordinat")
+                                    continue
+                            elif distance_km > radius_km:
                                 stats["geo_filtered"] += 1
                                 logger.info(
                                     f"Geo-filter: REJECT '{name}' | "
-                                    f"distance={distance_km if distance_km is not None else 'N/A'} km | "
-                                    f"target={admin} | radius={radius_km} km"
+                                    f"distance={distance_km:.2f} km | target={admin} | radius={radius_km} km"
                                 )
                                 continue
-                        elif not looks_like_country(address, row_profile):
+                        elif not looks_like_country(address, row_profile, country_vocab):
                             stats["geo_filtered"] += 1
                             logger.info(f"Country-filter: REJECT '{name}' | address='{address}'")
                             continue
@@ -1466,6 +1508,8 @@ def main(
                             address, scraped["building"], scraped["phone"], scraped["hours"],
                             scraped["latitude"], scraped["longitude"], scraped["status"],
                             scraped["website"], scraped["payment"],
+                            scraped.get("place_id", ""), row_country, level, admin,
+                            scraped.get("url", ""), time.strftime("%Y-%m-%d %H:%M:%S"),
                         ])
                         stats["scraped"] += 1
 
@@ -1670,6 +1714,12 @@ def run_job(spec_path, progress_callback=None, data_callback=None):
         if data_callback:
             data_callback(data_rows)
 
+    relevance_mode = clean_text(params.get("relevance_mode", "mirip")).lower()
+    if relevance_mode not in {"persis", "mirip", "longgar"}:
+        relevance_mode = "mirip"
+    if params.get("filter_relevance") is False:
+        relevance_mode = "longgar"
+
     data = main(
         input_file=str(input_file),
         save_interval=int(params.get("save_interval", 5)),
@@ -1684,10 +1734,13 @@ def run_job(spec_path, progress_callback=None, data_callback=None):
         scroll_wait=int(params.get("scroll_wait", 2500)),
         max_scrolls=int(params.get("max_scrolls", 100)),
         retries=int(params.get("retries", 3)),
-        filter_relevance=bool(params.get("filter_relevance", True)),
+        filter_relevance=bool(params.get("filter_relevance", True)) and relevance_mode != "longgar",
         admin_radius_km=params.get("radius_km"),
         progress_cb=_cb,
         data_cb=_dcb,
+        relevance_mode=relevance_mode,
+        keep_no_coords=bool(params.get("keep_no_coords", False)),
+        country_vocab=build_country_vocab(admin_df),
     )
 
     manifest = {
