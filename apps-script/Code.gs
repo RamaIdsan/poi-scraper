@@ -14,7 +14,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-06.6";
+var APP_VERSION = "2026-10-07.1";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -257,6 +257,76 @@ function diag_() {
   };
 }
 
+function canAccessJob_(user, job) {
+  if (!job) return false;
+  return isAdmin_(user.email) || String(job.user).toLowerCase() === String(user.email).toLowerCase();
+}
+
+function previewJob_(user, payload) {
+  var job = getJob_(payload.job_id);
+  if (!job) throw new Error("Job tidak ditemukan.");
+  if (!canAccessJob_(user, job)) throw new Error("Akses ditolak.");
+  var tabName = String(job.result_sheet || "");
+  if (!tabName) throw new Error("Job ini tidak memiliki tab hasil.");
+  var sh = sheet_().getSheetByName(tabName);
+  if (!sh) throw new Error("Tab hasil tidak ada: " + tabName);
+  var limit = Math.max(1, Math.min(50, Number(payload.limit || 10)));
+  var values = sh.getDataRange().getValues();
+  if (!values.length) return { headers: [], rows: [], total: 0 };
+  var headers = values[0].map(function (h) { return fmtVal_(h); });
+  var rows = values.slice(1, 1 + limit).map(function (r) {
+    return headers.map(function (_, i) { return fmtVal_(r[i]); });
+  });
+  return { headers: headers, rows: rows, total: Math.max(0, values.length - 1) };
+}
+
+function jobLogs_(user, payload) {
+  var jobId = String(payload.job_id || "");
+  if (jobId) {
+    var job = getJob_(jobId);
+    if (!job) throw new Error("Job tidak ditemukan.");
+    if (!canAccessJob_(user, job)) throw new Error("Akses ditolak.");
+  }
+  var limit = Math.max(1, Math.min(500, Number(payload.limit || 80)));
+  var rows = readTable_("Logs", LOG_HEADERS);
+  var admin = isAdmin_(user.email);
+  var filtered = rows.filter(function (l) {
+    if (jobId) return String(l.job_id) === jobId || String(l.job_id) === "";
+    return admin || String(l.user).toLowerCase() === String(user.email).toLowerCase();
+  });
+  return filtered.slice(-limit).map(function (l) {
+    return {
+      timestamp: fmtVal_(l.timestamp),
+      job_id: String(l.job_id || ""),
+      message: String(l.message || "")
+    };
+  });
+}
+
+function jobStats_(user) {
+  var jobs = readTable_("Jobs", JOB_HEADERS);
+  var admin = isAdmin_(user.email);
+  var mine = jobs.filter(function (j) {
+    return admin || String(j.user).toLowerCase() === String(user.email).toLowerCase();
+  });
+  var stats = { total: mine.length, done: 0, running: 0, queued: 0, failed: 0, active: 0, records: 0 };
+  mine.forEach(function (j) {
+    var s = String(j.status || "").toLowerCase();
+    if (s === "done") stats.done++;
+    else if (s === "failed") stats.failed++;
+    else if (s === "queued") stats.queued++;
+    else if (s === "running" || s === "dispatched") stats.running++;
+    if (s === "running" || s === "dispatched" || s === "queued") stats.active++;
+    var rec = Number(j.records || 0);
+    if (!rec) {
+      var m = String(j.progress || "").match(/\((\d+)\s*records?\)/i);
+      if (m) rec = Number(m[1]);
+    }
+    stats.records += rec;
+  });
+  return stats;
+}
+
 // ------------------------------------------------------------
 // Dispatch (hingga MAX_PARALLEL job berjalan bersamaan)
 // ------------------------------------------------------------
@@ -451,6 +521,15 @@ function handleAction_(action, payload, ident, isUi) {
     }
     if (action === "jobs.list") {
       return { ok: true, data: listJobs_(user) };
+    }
+    if (action === "jobs.preview") {
+      return { ok: true, data: previewJob_(user, payload) };
+    }
+    if (action === "jobs.logs") {
+      return { ok: true, data: jobLogs_(user, payload) };
+    }
+    if (action === "jobs.stats") {
+      return { ok: true, data: jobStats_(user) };
     }
     if (action === "admin.users") {
       if (!isAdmin_(user.email)) throw new Error("Hanya admin.");

@@ -43,6 +43,11 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ## 3. Panduan Dashboard (membuat job)
 
+> **Tampilan baru (v2026-10-07.1)**: UI modern dengan Tailwind + Lucide, tema
+> gelap/terang (ikut sistem + toggle), 4 kartu KPI, level target berupa kartu pilihan,
+> multi-pilih wilayah berbentuk chip, modal **Preview Data** & **Logs** bergaya terminal,
+> serta notifikasi toast.
+
 ### 3.1 Negara
 `Indonesia` atau `Philippines`. Menentukan data wilayah admin yang dipakai:
 - Indonesia: Provinsi → Kota/Kabupaten → Kecamatan → Kelurahan (4 tingkat).
@@ -256,6 +261,9 @@ curl -s -X POST "$WEBAPP_URL" -H "Content-Type: application/json" -d '{
 | `jobs.create` | lihat contoh | Membuat job, mengembalikan `job_id` |
 | `jobs.get` | `job_id` | Detail satu job (milik sendiri / admin) |
 | `jobs.list` | – | Daftar job (milik sendiri / admin) |
+| `jobs.preview` | `job_id`, `limit` | Sampel baris tab hasil (untuk modal Preview) |
+| `jobs.logs` | `job_id`, `limit` | Log job dari tab `Logs` |
+| `jobs.stats` | – | Agregat KPI (done/active/records) |
 | `admin.createKey` | `email`, `quota` | Hanya admin |
 | `admin.users` | – | Hanya admin |
 | `admin.diag` | – | Hanya admin; diagnostik spreadsheet |
