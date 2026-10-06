@@ -46,7 +46,7 @@
 <body>
 <header>
   <h1>POI Scraper Dashboard</h1>
-  <div class="muted" id="who">belum login</div>
+  <div class="muted" id="who">belum login <span id="ver"></span></div>
 </header>
 
 <!-- LOGIN -->
@@ -161,7 +161,7 @@ function api(action, payload){
     google.script.run
       .withSuccessHandler(function(res){
         if (res && res.ok) resolve(res.data);
-        else reject(new Error(res && res.error ? res.error : action + ": respons kosong/tidak valid"));
+        else reject(new Error(action + " gagal: " + (res && res.error ? res.error : JSON.stringify(res))));
       })
       .withFailureHandler(function(err){ reject(err); })
       .uiCall(action, payload || {}, IDENT);
@@ -174,6 +174,7 @@ function initConfig(){
     var data = (res && res.ok) ? res.data : {};
     CONFIG.index_base = data.index_base || "";
     CONFIG.oauth_client_id = data.oauth_client_id || "";
+    if (data.app_version) $("ver").textContent = "· v" + data.app_version;
     if (CONFIG.oauth_client_id && window.google && google.accounts){
       google.accounts.id.initialize({ client_id: CONFIG.oauth_client_id, callback: onGoogle });
       google.accounts.id.renderButton($("gsiButton"), { theme:"filled_black", size:"large", width:280 });
@@ -290,8 +291,20 @@ function submitJob(){
 }
 
 // ---------- Jobs ----------
+function fetchJobs(){
+  return new Promise(function(resolve, reject){
+    google.script.run
+      .withSuccessHandler(function(res){
+        if (res && res.ok) resolve(res.data);
+        else reject(new Error(res && res.error ? res.error : "uiJobsList: respons kosong"));
+      })
+      .withFailureHandler(function(err){ reject(err); })
+      .uiJobsList(IDENT);
+  }).catch(function(){ return api("jobs.list", {}); });
+}
+
 function loadJobs(){
-  api("jobs.list", {}).then(function(jobs){
+  fetchJobs().then(function(jobs){
     var html = "<table><tr><th>Brand</th><th>User</th><th>Status</th><th>Progress</th><th>Target</th><th>Records</th><th>ETA</th><th>Aksi</th></tr>";
     jobs.forEach(function(j){
       var pill = '<span class="pill ' + esc(j.status) + '">' + esc(j.status) + '</span>';

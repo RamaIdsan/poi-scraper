@@ -14,6 +14,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
+var APP_VERSION = "2026-10-06.3";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -418,6 +419,7 @@ function handleAction_(action, payload, ident, isUi) {
     }
     if (action === "config") {
       return { ok: true, data: {
+        app_version: APP_VERSION,
         index_base: prop_("INDEX_BASE"),
         oauth_client_id: prop_("OAUTH_CLIENT_ID"),
         is_admin: ident && ident.idToken ? null : false
@@ -474,6 +476,27 @@ function handleAction_(action, payload, ident, isUi) {
 // Wrapper untuk google.script.run dari dashboard
 function uiCall(action, payload, ident) {
   return handleAction_(action, payload || {}, ident || {}, true);
+}
+
+// Endpoint khusus daftar job (fallback bila routing action bermasalah).
+function uiJobsList(ident) {
+  try {
+    var user = resolveIdentity_(ident || {});
+    return { ok: true, data: listJobs_(user), app_version: APP_VERSION };
+  } catch (e) {
+    return { ok: false, error: "uiJobsList: " + String(e && e.message ? e.message : e) };
+  }
+}
+
+// Diagnostik cepat dari editor: uji listJobs_ tanpa lewat dashboard.
+function testListJobs() {
+  var users = readTable_("Users", USER_HEADERS);
+  var email = users.length ? users[0].email : String(prop_("ADMIN_EMAILS", "")).split(",")[0];
+  var out = listJobs_({ email: email });
+  Logger.log("APP_VERSION=" + APP_VERSION);
+  Logger.log("jobs for " + email + ": " + out.length);
+  Logger.log(JSON.stringify(out).slice(0, 1500));
+  return out;
 }
 
 // ------------------------------------------------------------
