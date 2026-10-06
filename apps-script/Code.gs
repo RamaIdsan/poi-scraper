@@ -218,13 +218,37 @@ function listJobs_(user) {
       ? "https://docs.google.com/spreadsheets/d/" + sheetId + "/edit#gid=" + gid
       : "";
     return {
-      job_id: j.job_id, user: j.user, country: j.country, brand: j.brand, status: j.status,
-      progress: j.progress, created_at: j.created_at, finished_at: j.finished_at,
-      output_url: j.output_url, error: j.error,
-      current_target: j.current_target, listings_found: j.listings_found, records: j.records,
-      eta: j.eta, run_url: j.run_url, result_sheet: j.result_sheet, result_url: tabUrl
+      job_id: j.job_id || "", user: j.user || "", country: j.country || "", brand: j.brand || "",
+      status: j.status || "", progress: j.progress || "", created_at: j.created_at || "",
+      finished_at: j.finished_at || "", output_url: j.output_url || "", error: j.error || "",
+      current_target: j.current_target || "", listings_found: j.listings_found || 0,
+      records: j.records || 0, eta: j.eta || "", run_url: j.run_url || "",
+      result_sheet: j.result_sheet || "", result_url: tabUrl
     };
   });
+}
+
+function diag_() {
+  var ss = sheet_();
+  var tabs = ss.getSheets().map(function (s) { return s.getName(); });
+  function header(name) {
+    var sh = ss.getSheetByName(name);
+    if (!sh) return null;
+    var cols = Math.max(1, sh.getLastColumn());
+    return sh.getRange(1, 1, 1, cols).getValues()[0].map(function (v) { return String(v); });
+  }
+  var jobs = readTable_("Jobs", JOB_HEADERS);
+  var users = readTable_("Users", USER_HEADERS);
+  return {
+    sheet_id: prop_("SHEET_ID"),
+    max_parallel: prop_("MAX_PARALLEL"),
+    admin_emails: prop_("ADMIN_EMAILS"),
+    tabs: tabs,
+    jobs_header: header("Jobs"),
+    users_header: header("Users"),
+    jobs_count: jobs.length,
+    users_count: users.length
+  };
 }
 
 // ------------------------------------------------------------
@@ -433,9 +457,17 @@ function handleAction_(action, payload, ident, isUi) {
       if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
       return { ok: true, data: adminSetActive_(payload.email, payload.active) };
     }
+    if (action === "admin.diag") {
+      if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
+      return { ok: true, data: diag_() };
+    }
     throw new Error("Action tidak dikenal: " + action);
   } catch (err) {
-    return { ok: false, error: String(err && err.message ? err.message : err) };
+    var msg = err && err.message ? err.message : String(err);
+    if (err && err.stack) {
+      msg += " | " + String(err.stack).split("\n").slice(0, 2).join(" ").trim();
+    }
+    return { ok: false, error: msg };
   }
 }
 

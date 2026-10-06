@@ -1,0 +1,259 @@
+# Dokumentasi Teknis & Panduan Penggunaan — POI Scraper
+
+Sistem scraping POI Google Maps untuk **Indonesia & Philippines** dengan dashboard
+Google Apps Script dan worker **GitHub Actions** (gratis, tanpa server sendiri dan
+tanpa laptop menyala).
+
+---
+
+## 1. Ringkasan sistem
+
+```
+Dashboard Apps Script (Web App)  ──►  Google Sheet (Users, Jobs, Logs, Result_*)
+        │                                        ▲
+        │ trigger (PAT)                          │ update progress/hasil
+        ▼                                        │
+GitHub Actions (Playwright)  ──►  Google Drive (CSV final)
+```
+
+- **Dashboard/API**: Google Apps Script Web App + Google Sheet + Google Drive.
+- **Worker**: GitHub Actions menjalankan Playwright (scraping) di cloud.
+- **Auth**: API key per user (SHA-256) **atau** Google login (opsional).
+- **Hasil**: tab `Result_...` di spreadsheet (streaming) + file CSV di Drive.
+- **Antrean**: maksimum `MAX_PARALLEL` (default 3) job jalan bersamaan.
+
+---
+
+## 2. Persiapan awal (sekali saja)
+
+Lihat `README.md` bagian **Deploy**. Ringkasnya:
+
+1. Push repo ke GitHub (`RamaIdsan/poi-scraper`).
+2. Buat Google Sheet (`SHEET_ID`), folder Drive (`DRIVE_FOLDER_ID`), dan **service account**.
+3. Share Sheet + folder ke email service account (Editor).
+4. Set GitHub Secrets: `GOOGLE_SERVICE_ACCOUNT_JSON`, `SHEET_ID`, `DRIVE_FOLDER_ID`, `SHARE_EMAIL`.
+5. Buat **GitHub PAT** (Actions: write, Contents: read).
+6. Di Apps Script: tempel `Code.gs`, `Index.html`, `appsscript.json`; set Script Properties
+   (`SHEET_ID`, `GITHUB_PAT`); jalankan `setup()` → `bootstrapAdmin()`; Deploy Web App.
+7. Salin **API KEY** dari Execution log.
+
+> Setiap kali `Code.gs`/`Index.html` diubah: **Deploy → Manage deployments → Edit → New version**.
+
+---
+
+## 3. Panduan Dashboard (membuat job)
+
+### 3.1 Negara
+`Indonesia` atau `Philippines`. Menentukan data wilayah admin yang dipakai:
+- Indonesia: Provinsi → Kota/Kabupaten → Kecamatan → Kelurahan (4 tingkat).
+- Philippines: Province → City/Municipality → Barangay (3 tingkat, tanpa kecamatan).
+
+### 3.2 Brand / kata kunci
+Nama tempat yang dicari di Google Maps. Contoh: `Alfamart`, `Indomaret`, `Jollibee`.
+Pencocokan nama bersifat lentur (mis. "Alfa Mart" tetap cocok dengan "Alfamart").
+
+### 3.3 Level target
+**Tingkat wilayah yang dijadikan titik pencarian.** Sistem akan membuat satu target
+pencarian untuk setiap unit pada level ini (di dalam wilayah yang Anda pilih).
+
+| Level | Arti | Contoh query |
+|---|---|---|
+| Provinsi/Province | pencarian per provinsi | `Alfamart in Aceh Indonesia` |
+| Kota/Kabupaten atau City/Municipality | per kota | `Alfamart in Bangued, Abra Philippines` |
+| Kecamatan *(hanya Indonesia)* | per kecamatan | `Alfamart in Arongan Lambalek, Aceh Barat, Aceh Indonesia` |
+| Kelurahan/Barangay | per kelurahan/barangay (paling detail) | `Alfamart in Angad, Bangued, Abra Philippines` |
+
+**Pedoman:** makin kecil level, makin lengkap hasilnya (karena Google Maps membatasi
+jumlah hasil per pencarian), tetapi makin lama.
+
+### 3.4 Provinsi / Kota / Kecamatan (dropdown bertingkat)
+Filter wilayah. Biarkan `(semua)` untuk seluruh wilayah pada level itu, atau pilih
+satu/lebih spesifik. Dropdown Kota mengikuti Provinsi, dan Kecamatan mengikuti Kota.
+
+### 3.5 Mode cakupan
+| Mode | Arti | Kapan dipakai |
+|---|---|---|
+| **Unit terpilih** | 1 pencarian per unit level target yang dipilih | Cepat; cocok untuk level kecil |
+| **Pecah ke unit terkecil** | Otomatis dipecah ke **seluruh kelurahan/barangay** di dalam wilayah pilihan | Hasil **paling lengkap**; cocok bila level target masih besar (provinsi/kota) |
+
+### 3.6 Tile density
+Menambah titik pencarian berbentuk grid pada tiap target (mengatasi batas hasil Google):
+- `Off` = 1 pencarian per target.
+- `3x3` = 9 pencarian per target.
+- `5x5` = 25 pencarian per target.
+
+Gunakan bila hasil terasa kurang lengkap, terutama di area padat. Semakin tinggi,
+semakin lama dan semakin banyak permintaan.
+
+### 3.7 Mulai Scraping
+Job dibuat (status `queued`) dan file target disimpan otomatis. Job akan dipicu ke
+GitHub Actions saat ada slot (lihat `MAX_PARALLEL`).
+
+### 3.8 Contoh skenario
+- **Semua kecamatan di Sumatera Utara**: Negara=Indonesia, Level=Kecamatan,
+  Provinsi=Sumatera Utara, Mode=Unit terpilih.
+- **Seluruh barangay di Kota Bangued** (paling lengkap): Negara=Philippines,
+  Level=City/Municipality, Provinsi=Abra, Kota=Bangued, Mode=Pecah ke unit terkecil.
+- **Cari di area padat**: tambahkan Tile density `3x3`.
+
+---
+
+## 4. Status job & kolom monitoring
+
+| Status | Arti |
+|---|---|
+| `queued` | Menunggu antrean (belum dipicu) |
+| `dispatched` | Sedang dikirim ke worker GitHub |
+| `running` | Sedang scraping |
+| `done` | Selesai; hasil tersedia |
+| `failed` | Gagal; lihat tooltip **err** |
+
+Kolom di tabel **Job Saya**:
+
+| Kolom | Arti |
+|---|---|
+| Brand | Kata kunci job |
+| User | Pemilik job (admin melihat semua) |
+| Status | Lihat tabel status di atas |
+| Progress | Persentase target yang selesai |
+| Target | Wilayah yang sedang diproses |
+| Records | Jumlah POI yang sudah tersimpan |
+| ETA | Perkiraan sisa waktu |
+| Aksi | **log** = log GitHub Actions; **tab** = tab hasil; **csv** = unduh CSV |
+
+Tabel menyegar otomatis setiap 10 detik.
+
+---
+
+## 5. Di mana hasil disimpan?
+
+1. **Tab `Result_<brand>_<tanggal>_<job8>`** di spreadsheet yang sama.
+   - Selama scraping, baris **mengalir (streaming)** ke tab sehingga bisa dipantau.
+   - Saat selesai, job *merge* menulis ulang tab dengan data **bersih (dedup)**.
+   - Bisa ada **duplikat sementara** selama proses, hilang saat selesai.
+2. **File CSV final** di folder Google Drive (`Output_final_<job_id>.csv`),
+   dibagikan ke `SHARE_EMAIL`. Link tersedia di kolom **csv**.
+3. **Tab `Logs`**: catatan milestone (mulai chunk, selesai, error).
+4. **Log lengkap** ada di GitHub Actions (tombol **log**).
+
+> Batas Google Sheets: **10 juta sel/spreadsheet**. Untuk hasil sangat besar, gunakan
+> CSV Drive.
+
+---
+
+## 6. Multi-user & API key
+
+- **Admin** (email di `ADMIN_EMAILS`) melihat **semua** job dan mengelola user.
+- **User biasa** melihat **job miliknya** saja di dashboard.
+- Membuat user: panel **Admin - API Key** → isi email + kuota (`0` = unlimited) →
+  **Buat / Reset API Key**. Kunci ditampilkan **sekali**; salin dan berikan ke user.
+- Saat key dibuat, spreadsheet otomatis di-share sebagai **Viewer** ke email user
+  (sehingga mereka bisa membuka tab hasil — namun secara teknis bisa melihat semua tab).
+- Kuota dihitung per job yang dibuat.
+
+### Fungsi Apps Script yang berguna (jalankan dari editor)
+| Fungsi | Fungsi |
+|---|---|
+| `setup()` | Sinkron header tab + isi default properti |
+| `bootstrapAdmin()` | Membuat/mengembalikan API key admin (tampil di log) |
+| `listApiUsers()` | Daftar user + kuota/pemakaian |
+| `hashApiKey(key)` | Hash sebuah key (debug) |
+| `setAdminEmails("a@x,b@y")` | Ganti daftar admin |
+| `setMaxParallel(n)` | Atur jumlah job paralel |
+| `setupTriggers()` | Pasang trigger dispatcher tiap menit |
+
+---
+
+## 7. API program (akses eksternal)
+
+POST JSON ke URL Web App Apps Script:
+
+```bash
+curl -s -X POST "$WEBAPP_URL" -H "Content-Type: application/json" -d '{
+  "action": "jobs.create",
+  "api_key": "poi_xxx",
+  "payload": {
+    "country": "indonesia",
+    "brand": "Alfamart",
+    "level": "kecamatan",
+    "scope": {"provinsi": ["Sumatera Utara"]},
+    "mode": "unit",
+    "tile": 0
+  }
+}'
+```
+
+| Action | Payload | Keterangan |
+|---|---|---|
+| `jobs.create` | lihat contoh | Membuat job, mengembalikan `job_id` |
+| `jobs.get` | `job_id` | Detail satu job (milik sendiri / admin) |
+| `jobs.list` | – | Daftar job (milik sendiri / admin) |
+| `admin.createKey` | `email`, `quota` | Hanya admin |
+| `admin.users` | – | Hanya admin |
+| `admin.diag` | – | Hanya admin; diagnostik spreadsheet |
+
+Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`.
+
+---
+
+## 8. Cara kerja di balik layar
+
+1. Dashboard membuat baris `Jobs` + tab hasil kosong → `queued`.
+2. Trigger per menit / submit memanggil `dispatch()` yang memicu workflow GitHub
+   untuk job `queued` selama slot < `MAX_PARALLEL`.
+3. GitHub Actions:
+   - `plan_chunks.py` menghitung target & memecah per provinsi bila besar.
+   - Untuk tiap chunk: `run_job.py` menjalankan scraper, **streaming** baris ke tab
+     hasil, menulis `progress/current_target/listings_found/records/eta/run_url` dan `Logs`.
+   - `merge_parts.py` menggabungkan semua chunk, dedup, menulis ulang tab, upload CSV Drive,
+     set `status=done`.
+4. Dashboard memantau lewat kolom-kolom tersebut.
+
+**Judul job** diberi nama `Result_<brand>_<YYYYMMDD_HHMM>_<job8>` agar mudah dikenali.
+
+---
+
+## 9. Troubleshooting
+
+| Gejala | Penyebab & solusi |
+|---|---|
+| **"API key tidak valid"** | Tab `Users` kosong. Jalankan `bootstrapAdmin()` di editor, salin key dari Execution log. |
+| **Tidak bisa login sama sekali (deadlock)** | Panel Admin hanya muncul setelah login; key pertama harus dari `bootstrapAdmin()`. |
+| **"Google login belum dikonfigurasi"** | `OAUTH_CLIENT_ID` kosong. Isi untuk pakai login Google, atau pakai API key. |
+| **"Job Saya: Gagal ..."** | Klik **Diagnostik** (panel Admin) lalu kirim hasilnya. Umumnya header tab belum sinkron → jalankan `setup()`. |
+| **Job lama `queued`** | Antrean penuh atau trigger belum jalan. Jalankan `setupTriggers()`, atau panggil `dispatch()` manual. |
+| **Job `failed`** | Lihat tombol **log** (GitHub Actions) dan tab `Logs`. |
+| **Hasil kosong / sedikit** | Perkecil level target, pakai **Pecah ke unit terkecil**, atau naikkan **Tile density**. Google juga bisa memblokir IP GitHub. |
+| **Tab hasil tidak terisi** | Pastikan service account masih **Editor** di spreadsheet; cek tab `Logs`. |
+| **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |
+
+---
+
+## 10. Batasan & catatan
+
+- GitHub Actions: maksimum **6 jam/job**; scope besar otomatis dipecah per provinsi.
+- Google Sheets: **10 juta sel/spreadsheet**.
+- IP GitHub (Azure) lebih mudah diblokir Google → hasil bersifat **best-effort**.
+- Streaming memunculkan duplikat sementara; dibersihkan saat selesai.
+- Paralel 3 (default) menaikkan peluang rate-limit; bisa diturunkan via `setMaxParallel(n)`.
+- Public repo: menit Actions gratis; kode + CSV admin publik.
+
+---
+
+## 11. Struktur repo
+
+```
+scraper_indonesia.py   # scraper + job-mode
+admin/build_index.py   # generator index dropdown
+admin/id_index.json    # index Indonesia (provinsi/kota/kecamatan)
+admin/ph_index.json    # index Philippines (province/city)
+worker/plan_chunks.py  # pecah spec -> chunk provinsi
+worker/run_job.py      # jalankan 1 chunk + streaming + update Sheet
+worker/merge_parts.py  # gabung + dedup + tab hasil + Drive
+worker/cloud.py        # helper Sheets & Drive
+.github/workflows/scrape.yml
+data/                  # CSV admin
+apps-script/           # Code.gs, Index.html, appsscript.json
+DOKUMENTASI.md         # file ini
+README.md              # panduan deploy
+```

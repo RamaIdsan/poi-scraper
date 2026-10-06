@@ -26,6 +26,7 @@
     .row { display:flex; gap:10px; }
     .row > div { flex:1; }
     .muted { color:var(--muted); font-size:12px; }
+    .help { margin:4px 0 0; font-size:12px; line-height:1.5; }
     .msg { margin-top:12px; padding:10px; border-radius:8px; font-size:13px; display:none; }
     .msg.err { background:#7f1d1d; display:block; }
     .msg.ok { background:#14532d; display:block; }
@@ -74,15 +75,23 @@
       <option value="indonesia">Indonesia</option>
       <option value="philippines">Philippines</option>
     </select>
+    <p class="muted help">Menentukan data wilayah admin yang dipakai untuk pencarian.</p>
+
     <label>Brand / kata kunci</label>
     <input id="brand" placeholder="Alfamart">
+    <p class="muted help">Nama tempat yang dicari di Google Maps, mis. Alfamart, Indomaret, Jollibee.</p>
+
     <label>Level target</label>
     <select id="level"></select>
+    <p class="muted help">Tingkat wilayah yang jadi titik pencarian. Contoh pilih <b>Kecamatan</b> → pencarian dilakukan per kecamatan. Level lebih kecil (Kelurahan/Barangay) = hasil lebih lengkap.</p>
+
     <div class="row">
       <div><label>Provinsi</label><select id="provinsi"><option value="">(semua)</option></select></div>
       <div><label>Kota/Kabupaten</label><select id="kota"><option value="">(semua)</option></select></div>
     </div>
     <div id="kecWrap"><label>Kecamatan</label><select id="kecamatan"><option value="">(semua)</option></select></div>
+    <p class="muted help">Kosongkan = seluruh wilayah pada level itu. Pilih spesifik untuk membatasi area (mis. hanya Kota Bangued).</p>
+
     <div class="row">
       <div><label>Mode cakupan</label>
         <select id="mode">
@@ -94,9 +103,27 @@
         <select id="tile"><option value="0">Off</option><option value="1">3x3</option><option value="2">5x5</option></select>
       </div>
     </div>
+    <p class="muted help"><b>Mode cakupan</b>: <b>Unit terpilih</b> = 1 pencarian per unit yang dipilih. <b>Pecah ke unit terkecil</b> = otomatis dipecah ke seluruh kelurahan/barangay di dalamnya (lebih lengkap, lebih lama).</p>
+    <p class="muted help"><b>Tile density</b>: menambah titik pencarian berbentuk grid tiap target (3x3 = 9 pencarian/target, 5x5 = 25). Pakai bila hasil kurang lengkap.</p>
+
     <button class="btn green" onclick="submitJob()">Mulai Scraping</button>
     <div class="msg" id="jobMsg"></div>
     <p class="muted" id="hint">Scope besar otomatis dipecah per provinsi.</p>
+
+    <details style="margin-top:14px">
+      <summary class="muted" style="cursor:pointer">Panduan singkat & arti status</summary>
+      <div class="muted" style="font-size:12px;line-height:1.6;margin-top:8px">
+        <p><b>Alur:</b> pilih negara → brand → level → wilayah → mode → Mulai. Job masuk antrean lalu dijalankan di cloud (GitHub Actions). Hasil mengalir ke tab <code>Result_...</code> dan dirapikan saat selesai.</p>
+        <p><b>Status job:</b><br>
+          <b>queued</b> = menunggu antrean.<br>
+          <b>dispatched</b> = sedang dikirim ke worker.<br>
+          <b>running</b> = sedang scraping (lihat Progress, Target, Records, ETA).<br>
+          <b>done</b> = selesai (tombol csv/tab tersedia).<br>
+          <b>failed</b> = gagal (lihat tooltip "err").
+        </p>
+        <p><b>Kolom:</b> Progress = % target selesai; Target = wilayah yang sedang diproses; Records = jumlah POI tersimpan; ETA = perkiraan sisa waktu; Aksi: <b>log</b> (log GitHub), <b>tab</b> (tab hasil), <b>csv</b> (unduh CSV).</p>
+      </div>
+    </details>
   </div>
 
   <div class="card">
@@ -111,7 +138,9 @@
         <div><input id="newQuota" placeholder="kuota (0=unlimited)"></div>
       </div>
       <button class="btn small" style="margin-top:10px" onclick="adminCreate()">Buat / Reset API Key</button>
+      <button class="btn small" style="margin-top:10px" onclick="adminDiag()">Diagnostik</button>
       <div id="adminMsg" class="msg"></div>
+      <div id="diagMsg" class="msg"></div>
       <div id="users"></div>
     </div>
   </div>
@@ -131,7 +160,8 @@ function api(action, payload){
   return new Promise(function(resolve, reject){
     google.script.run
       .withSuccessHandler(function(res){
-        if (res && res.ok) resolve(res.data); else reject(new Error(res && res.error ? res.error : "unknown"));
+        if (res && res.ok) resolve(res.data);
+        else reject(new Error(res && res.error ? res.error : action + ": respons kosong/tidak valid"));
       })
       .withFailureHandler(function(err){ reject(err); })
       .uiCall(action, payload || {}, IDENT);
@@ -277,7 +307,10 @@ function loadJobs(){
     });
     html += "</table>";
     $("jobs").innerHTML = jobs.length ? html : '<p class="muted">Belum ada job.</p>';
-  }).catch(function(err){ $("jobs").innerHTML = '<p class="muted">Gagal: ' + err.message + '</p>'; });
+  }).catch(function(err){
+    $("jobs").innerHTML = '<p class="muted">Gagal memuat job: ' + esc(err.message) +
+      '<br>Jalankan <b>Diagnostik</b> (panel Admin) lalu kirim hasilnya untuk dicek.</p>';
+  });
 }
 
 // ---------- Admin ----------
@@ -289,6 +322,13 @@ function adminCreate(){
     $("adminMsg").innerHTML = 'API key untuk <b>' + d.email + '</b> (simpan sekali):<div class="keybox">' + d.api_key + '</div>';
     loadUsers();
   }).catch(function(err){ showMsg($("adminMsg"), "Gagal: " + err.message, false); });
+}
+
+function adminDiag(){
+  api("admin.diag", {}).then(function(d){
+    $("diagMsg").innerHTML = '<pre style="white-space:pre-wrap;font-size:12px;margin:0">' + esc(JSON.stringify(d, null, 2)) + '</pre>';
+    $("diagMsg").className = "msg ok";
+  }).catch(function(err){ showMsg($("diagMsg"), "Gagal: " + err.message, false); });
 }
 
 function loadUsers(){
