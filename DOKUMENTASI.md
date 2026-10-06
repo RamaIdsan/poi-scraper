@@ -96,6 +96,53 @@ GitHub Actions saat ada slot (lihat `MAX_PARALLEL`).
   Level=City/Municipality, Provinsi=Abra, Kota=Bangued, Mode=Pecah ke unit terkecil.
 - **Cari di area padat**: tambahkan Tile density `3x3`.
 
+> Dashboard kini menampilkan **perkiraan jumlah target × pencarian** tepat di atas
+> tombol **Mulai Scraping** — berubah otomatis mengikuti pilihan Anda.
+
+### 3.9 Contoh angka nyata
+
+**Level target** — brand contoh `Alfamart` di **Sumatera Utara** (tanpa mempersempit kota):
+
+| Level target | Jumlah target | Contoh yang dijalankan |
+|---|---|---|
+| Provinsi | **1** | `Alfamart in Sumatera Utara Indonesia` |
+| Kota/Kabupaten | **33** | `Alfamart in Kota Medan, Sumatera Utara Indonesia` |
+| Kecamatan | **455** | `Alfamart in Medan Amplas, Kota Medan, Sumatera Utara Indonesia` |
+| Kelurahan | **6.109** | `Alfamart in Amplas, Medan Amplas, Kota Medan, Sumatera Utara Indonesia` |
+
+**Philippines** — `Jollibee` di **Abra**:
+
+| Level | Jumlah target | Contoh |
+|---|---|---|
+| Province | **1** | `Jollibee in Abra Philippines` |
+| City/Municipality | **27** | `Jollibee in Bangued, Abra Philippines` |
+| Barangay | **302** | `Jollibee in Angad, Bangued, Abra Philippines` |
+
+**Dropdown wilayah mempersempit level target:**
+- Level=Kecamatan + Provinsi=Sumatera Utara + Kota=`(semua)` → **455** target.
+- Level=Kecamatan + Provinsi=Sumatera Utara + Kota=`Kota Medan` → **21** target.
+- Level=Kelurahan + Kota=`Kota Medan` → **151** target.
+
+**Mode cakupan** (contoh: Level=Kota/Kabupaten, Provinsi=Sumatera Utara, Kota=`(semua)`):
+
+| Mode | Arti | Jumlah target |
+|---|---|---|
+| Unit terpilih | 1 pencarian per **kota/kabupaten** | **33** |
+| Pecah ke unit terkecil | turun ke **semua kelurahan** se-Sumut | **6.109** |
+
+Contoh PH (Level=City, Provinsi=Abra, Kota=Bangued): Unit=**1** target; Expand=**30** target barangay.
+
+**Tile density** (pengali pencarian per target):
+
+| Tile | Pencarian/target | 21 target (kecamatan Medan) | 6.109 target (kelurahan Sumut) |
+|---|---|---|---|
+| Off | 1 | 21 | 6.109 |
+| 3x3 | 9 | 189 | 54.981 |
+| 5x5 | 25 | 525 | 152.725 |
+
+Gunakan tile hanya bila hasil kurang lengkap — semakin besar, semakin lama dan
+semakin besar risiko rate-limit Google.
+
 ---
 
 ## 4. Status job & kolom monitoring

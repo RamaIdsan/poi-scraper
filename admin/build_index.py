@@ -12,6 +12,31 @@ sys.path.insert(0, str(ROOT))
 import scraper_indonesia as s  # noqa: E402
 
 
+SEP = "\u0001"
+
+
+def build_counts(df, profile):
+    """counts[child_level][parent_path] = jumlah unit child di bawah parent.
+
+    parent_path = nilai leluhur dipisah SEP, urut atas->bawah (provinsi dulu).
+    """
+    levels = profile["levels"]
+    cbl = s.columns_by_level(profile)
+    counts = {}
+    for i, child in enumerate(levels):
+        if i == 0:
+            continue
+        cols = cbl[child]  # [child, parent_bawah..., provinsi]
+        uniq = df[cols].drop_duplicates()
+        cmap = {}
+        for row in uniq.itertuples(index=False, name=None):
+            parent_vals = row[1:]  # bawah->atas
+            key = SEP.join(reversed(parent_vals))  # atas->bawah
+            cmap[key] = cmap.get(key, 0) + 1
+        counts[child] = cmap
+    return counts
+
+
 def build(country):
     profile = s.get_profile(country)
     df = s.load_admin_data(profile)
@@ -35,8 +60,10 @@ def build(country):
         "label": profile["label"],
         "levels": profile["levels"],
         "level_labels": profile["level_labels"],
+        "sep": SEP,
         "provinces": provinces,
         "tree": tree,
+        "counts": build_counts(df, profile),
     }
 
 
