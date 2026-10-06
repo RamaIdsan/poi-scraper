@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>POI Scraper Dashboard</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --ink:#e2e8f0; --muted:#94a3b8; --accent:#22c55e; --accent2:#3b82f6; --danger:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+    header { padding:16px 24px; background:#111827; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; }
+    header h1 { font-size:18px; margin:0; }
+    .wrap { max-width:1100px; margin:0 auto; padding:20px; display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+    @media (max-width:900px){ .wrap{ grid-template-columns:1fr; } }
+    .card { background:var(--card); border:1px solid #334155; border-radius:12px; padding:18px; }
+    .card h2 { font-size:14px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 14px; }
+    label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+    input, select { width:100%; padding:9px 10px; background:#0b1220; color:var(--ink); border:1px solid #334155; border-radius:8px; font-size:14px; }
+    button { cursor:pointer; border:none; border-radius:8px; padding:10px 14px; font-weight:600; font-size:14px; }
+    .btn { background:var(--accent2); color:#fff; width:100%; margin-top:16px; }
+    .btn:hover { filter:brightness(1.1); }
+    .btn.small { width:auto; padding:6px 10px; font-size:12px; background:#334155; color:var(--ink); }
+    .btn.green { background:var(--accent); }
+    .row { display:flex; gap:10px; }
+    .row > div { flex:1; }
+    .muted { color:var(--muted); font-size:12px; }
+    .msg { margin-top:12px; padding:10px; border-radius:8px; font-size:13px; display:none; }
+    .msg.err { background:#7f1d1d; display:block; }
+    .msg.ok { background:#14532d; display:block; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { text-align:left; padding:8px 6px; border-bottom:1px solid #334155; }
+    th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; }
+    .pill { padding:2px 8px; border-radius:999px; font-size:11px; background:#334155; }
+    .pill.done { background:#14532d; }
+    .pill.failed { background:#7f1d1d; }
+    .pill.running,.pill.dispatched { background:#1e3a8a; }
+    a.dl { color:var(--accent); }
+    .login { max-width:420px; margin:60px auto; }
+    .hidden { display:none !important; }
+    .keybox { font-family:ui-monospace,Consolas,monospace; background:#0b1220; border:1px dashed #475569; padding:10px; border-radius:8px; margin-top:10px; word-break:break-all; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>POI Scraper Dashboard</h1>
+  <div class="muted" id="who">belum login</div>
+</header>
+
+<!-- LOGIN -->
+<div class="card login" id="loginCard">
+  <h2>Masuk</h2>
+  <div id="gsiWrap">
+    <div id="gsiButton"></div>
+    <p class="muted" id="gsiHint">Login dengan Google atau gunakan API key.</p>
+  </div>
+  <label>API key</label>
+  <input id="apiKey" placeholder="poi_xxxxxxxx">
+  <button class="btn" onclick="loginKey()">Masuk dengan API key</button>
+  <div class="msg" id="loginMsg"></div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="wrap hidden" id="app">
+  <div class="card">
+    <h2>Buat Job Scraping</h2>
+    <label>Negara</label>
+    <select id="country">
+      <option value="indonesia">Indonesia</option>
+      <option value="philippines">Philippines</option>
+    </select>
+    <label>Brand / kata kunci</label>
+    <input id="brand" placeholder="Alfamart">
+    <label>Level target</label>
+    <select id="level"></select>
+    <div class="row">
+      <div><label>Provinsi</label><select id="provinsi"><option value="">(semua)</option></select></div>
+      <div><label>Kota/Kabupaten</label><select id="kota"><option value="">(semua)</option></select></div>
+    </div>
+    <div id="kecWrap"><label>Kecamatan</label><select id="kecamatan"><option value="">(semua)</option></select></div>
+    <div class="row">
+      <div><label>Mode cakupan</label>
+        <select id="mode">
+          <option value="unit">Unit terpilih</option>
+          <option value="expand">Pecah ke unit terkecil</option>
+        </select>
+      </div>
+      <div><label>Tile density</label>
+        <select id="tile"><option value="0">Off</option><option value="1">3x3</option><option value="2">5x5</option></select>
+      </div>
+    </div>
+    <button class="btn green" onclick="submitJob()">Mulai Scraping</button>
+    <div class="msg" id="jobMsg"></div>
+    <p class="muted" id="hint">Scope besar otomatis dipecah per provinsi.</p>
+  </div>
+
+  <div class="card">
+    <h2>Job Saya</h2>
+    <button class="btn small" onclick="loadJobs()">Refresh</button>
+    <div id="jobs"></div>
+
+    <div id="adminBox" class="hidden" style="margin-top:20px;border-top:1px solid #334155;padding-top:14px">
+      <h2>Admin - API Key</h2>
+      <div class="row">
+        <div><input id="newEmail" placeholder="email@domain"></div>
+        <div><input id="newQuota" placeholder="kuota (0=unlimited)"></div>
+      </div>
+      <button class="btn small" style="margin-top:10px" onclick="adminCreate()">Buat / Reset API Key</button>
+      <div id="adminMsg" class="msg"></div>
+      <div id="users"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var IDENT = { idToken: localStorage.getItem("poi_idtoken") || "", apiKey: localStorage.getItem("poi_apikey") || "" };
+var CONFIG = { index_base: "", oauth_client_id: "" };
+var INDEX = null;
+var ME = null;
+
+function $(id){ return document.getElementById(id); }
+function showMsg(el, text, ok){ el.textContent = text; el.className = "msg " + (ok ? "ok" : "err"); }
+
+function api(action, payload){
+  return new Promise(function(resolve, reject){
+    google.script.run
+      .withSuccessHandler(function(res){
+        if (res && res.ok) resolve(res.data); else reject(new Error(res && res.error ? res.error : "unknown"));
+      })
+      .withFailureHandler(function(err){ reject(err); })
+      .uiCall(action, payload || {}, IDENT);
+  });
+}
+
+// ---------- Auth ----------
+function initConfig(){
+  google.script.run.withSuccessHandler(function(res){
+    var data = (res && res.ok) ? res.data : {};
+    CONFIG.index_base = data.index_base || "";
+    CONFIG.oauth_client_id = data.oauth_client_id || "";
+    if (CONFIG.oauth_client_id && window.google && google.accounts){
+      google.accounts.id.initialize({ client_id: CONFIG.oauth_client_id, callback: onGoogle });
+      google.accounts.id.renderButton($("gsiButton"), { theme:"filled_black", size:"large", width:280 });
+    } else {
+      $("gsiButton").classList.add("hidden");
+      $("gsiHint").textContent = "Google login belum dikonfigurasi (OAUTH_CLIENT_ID). Gunakan API key.";
+    }
+    if (IDENT.idToken || IDENT.apiKey) tryLogin();
+  }).uiCall("config", {}, {});
+}
+
+function onGoogle(resp){
+  IDENT.idToken = resp.credential || "";
+  localStorage.setItem("poi_idtoken", IDENT.idToken);
+  tryLogin();
+}
+
+function loginKey(){
+  var v = $("apiKey").value.trim();
+  if (!v){ showMsg($("loginMsg"), "API key kosong.", false); return; }
+  IDENT.apiKey = v;
+  IDENT.idToken = "";
+  localStorage.removeItem("poi_idtoken");
+  localStorage.setItem("poi_apikey", v);
+  tryLogin();
+}
+
+function tryLogin(){
+  api("me", {}).then(function(me){
+    ME = me;
+    $("who").textContent = me.email + (me.is_admin ? " (admin)" : "") + " | kuota " + (me.quota > 0 ? (me.used + "/" + me.quota) : "unlimited");
+    $("loginCard").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    if (me.is_admin){ $("adminBox").classList.remove("hidden"); loadUsers(); }
+    loadCountry();
+    loadJobs();
+  }).catch(function(err){
+    showMsg($("loginMsg"), "Gagal login: " + err.message, false);
+  });
+}
+
+// ---------- Dropdowns ----------
+function loadCountry(){
+  var c = $("country").value;
+  fetch(CONFIG.index_base + "/" + (c === "indonesia" ? "id" : "ph") + "_index.json")
+    .then(function(r){ return r.json(); })
+    .then(function(idx){
+      INDEX = idx;
+      var lv = $("level"); lv.innerHTML = "";
+      idx.levels.forEach(function(l){
+        var o = document.createElement("option");
+        o.value = l; o.textContent = idx.level_labels[l] || l;
+        lv.appendChild(o);
+      });
+      if (idx.levels.indexOf("kota") >= 0) lv.value = "kota";
+      fillProvinces();
+    })
+    .catch(function(err){ showMsg($("jobMsg"), "Gagal load index: " + err.message, false); });
+}
+
+function fillProvinces(){
+  var p = $("provinsi"); p.innerHTML = '<option value="">(semua)</option>';
+  INDEX.provinces.forEach(function(x){ var o = document.createElement("option"); o.value=x; o.textContent=x; p.appendChild(o); });
+  fillCities(); updateKecVisible();
+}
+
+function fillCities(){
+  var prov = $("provinsi").value;
+  var k = $("kota"); k.innerHTML = '<option value="">(semua)</option>';
+  if (prov && INDEX.tree[prov]){
+    Object.keys(INDEX.tree[prov]).sort().forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; k.appendChild(o); });
+  }
+  fillKecamatan();
+}
+
+function fillKecamatan(){
+  var prov=$("provinsi").value, city=$("kota").value;
+  var ke=$("kecamatan"); ke.innerHTML='<option value="">(semua)</option>';
+  if (prov && city && INDEX.tree[prov] && INDEX.tree[prov][city]){
+    INDEX.tree[prov][city].forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; ke.appendChild(o); });
+  }
+}
+
+function updateKecVisible(){
+  var hasKec = INDEX && INDEX.levels.indexOf("kecamatan") >= 0;
+  $("kecWrap").classList.toggle("hidden", !hasKec);
+}
+
+$("country") && $("country").addEventListener("change", loadCountry);
+$("provinsi") && $("provinsi").addEventListener("change", function(){ fillCities(); });
+$("kota") && $("kota").addEventListener("change", fillKecamatan);
+
+// ---------- Submit ----------
+function submitJob(){
+  var scope = {};
+  var prov=$("provinsi").value, city=$("kota").value, kec=$("kecamatan").value;
+  if (prov) scope.provinsi = [prov];
+  if (city) scope.kota = [city];
+  if (kec) scope.kecamatan = [kec];
+  var payload = {
+    country: $("country").value,
+    brand: $("brand").value.trim(),
+    level: $("level").value,
+    scope: scope,
+    mode: $("mode").value,
+    tile: Number($("tile").value)
+  };
+  if (!payload.brand){ showMsg($("jobMsg"), "Brand wajib diisi.", false); return; }
+  showMsg($("jobMsg"), "Mengirim job...", true);
+  api("jobs.create", payload).then(function(j){
+    showMsg($("jobMsg"), "Job dibuat: " + j.job_id + " (status " + j.status + ")", true);
+    loadJobs();
+  }).catch(function(err){ showMsg($("jobMsg"), "Gagal: " + err.message, false); });
+}
+
+// ---------- Jobs ----------
+function loadJobs(){
+  api("jobs.list", {}).then(function(jobs){
+    var html = "<table><tr><th>Brand</th><th>Negara</th><th>Status</th><th>Progress</th><th>Hasil</th></tr>";
+    jobs.forEach(function(j){
+      var pill = '<span class="pill ' + j.status + '">' + j.status + '</span>';
+      var dl = j.output_url ? '<a class="dl" href="' + j.output_url + '" target="_blank">unduh</a>' : (j.error ? '<span class="muted" title="'+j.error+'">error</span>' : '<span class="muted">-</span>');
+      html += "<tr><td>" + j.brand + "</td><td>" + j.country + "</td><td>" + pill + "</td><td>" + (j.progress||"-") + "</td><td>" + dl + "</td></tr>";
+    });
+    html += "</table>";
+    $("jobs").innerHTML = jobs.length ? html : '<p class="muted">Belum ada job.</p>';
+  }).catch(function(err){ $("jobs").innerHTML = '<p class="muted">Gagal: ' + err.message + '</p>'; });
+}
+
+// ---------- Admin ----------
+function adminCreate(){
+  var email = $("newEmail").value.trim();
+  var quota = Number($("newQuota").value || 0);
+  api("admin.createKey", { email: email, quota: quota }).then(function(d){
+    showMsg($("adminMsg"), "API key untuk " + d.email + " (simpan sekali): " + d.api_key, true);
+    $("adminMsg").innerHTML = 'API key untuk <b>' + d.email + '</b> (simpan sekali):<div class="keybox">' + d.api_key + '</div>';
+    loadUsers();
+  }).catch(function(err){ showMsg($("adminMsg"), "Gagal: " + err.message, false); });
+}
+
+function loadUsers(){
+  api("admin.users", {}).then(function(users){
+    var html = "<table><tr><th>Email</th><th>Kuota</th><th>Used</th><th>Aktif</th></tr>";
+    users.forEach(function(u){
+      html += "<tr><td>" + u.email + "</td><td>" + (u.quota||0) + "</td><td>" + (u.used||0) + "</td><td>" + (u.active) + "</td></tr>";
+    });
+    html += "</table>";
+    $("users").innerHTML = html;
+  }).catch(function(){});
+}
+
+// Auto refresh jobs
+setInterval(function(){ if (ME) loadJobs(); }, 20000);
+window.addEventListener("load", initConfig);
+</script>
+</body>
+</html>

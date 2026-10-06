@@ -1,0 +1,98 @@
+name: poi-scrape
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "ID job dari dashboard"
+        required: true
+      spec_json:
+        description: "Spec JSON job"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - id: plan
+        env:
+          SPEC_JSON: ${{ github.event.inputs.spec_json }}
+        run: |
+          printf '%s' "$SPEC_JSON" > spec.json
+          python worker/plan_chunks.py --spec spec.json | tee plan.json
+          MATRIX=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['matrix']))")
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  scrape:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Run scrape chunk
+        env:
+          SPEC_JSON: ${{ github.event.inputs.spec_json }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          SHARE_EMAIL: ${{ secrets.SHARE_EMAIL }}
+        run: |
+          printf '%s' "$SPEC_JSON" > spec.json
+          python worker/run_job.py \
+            --spec spec.json \
+            --provinsi "${{ matrix.chunk }}" \
+            --chunk-index ${{ strategy.job-index }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: part-${{ strategy.job-index }}
+          path: output/Output_*.csv
+          if-no-files-found: ignore
+
+  merge:
+    needs: [plan, scrape]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Merge and publish
+        env:
+          SPEC_JSON: ${{ github.event.inputs.spec_json }}
+          WF_RESULT: ${{ needs.scrape.result }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          SHARE_EMAIL: ${{ secrets.SHARE_EMAIL }}
+        run: |
+          printf '%s' "$SPEC_JSON" > spec.json
+          python worker/merge_parts.py --spec spec.json --parts parts --workflow-result "$WF_RESULT"

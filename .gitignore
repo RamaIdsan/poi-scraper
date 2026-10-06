@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+output/
+parts/
+*.state.json
+*.log
+*.manifest.json
+Input_*.csv
+.env
