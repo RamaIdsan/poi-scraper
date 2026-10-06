@@ -61,7 +61,7 @@ def _run_id():
     return os.environ.get("GITHUB_RUN_ID", "")
 
 
-def _update_chunk_json(job_id, idx, label, status, records):
+def _update_chunk_json(job_id, idx, label, status, records, stats=None):
     """Catat status tiap chunk di kolom chunks_json (chunk berjalan serial)."""
     try:
         raw = cloud.get_job_field(job_id, "chunks_json") or ""
@@ -70,7 +70,13 @@ def _update_chunk_json(job_id, idx, label, status, records):
             data = {}
     except Exception:
         data = {}
-    data[str(idx)] = {"label": label, "status": status, "records": records}
+    entry = {"label": label, "status": status, "records": records}
+    if stats:
+        # Simpan hanya angka ringkas; daftar zero_targets tidak dimasukkan agar
+        # kolom chunks_json tidak melebihi batas 50.000 karakter.
+        compact = {k: v for k, v in stats.items() if k != "zero_targets"}
+        entry["stats"] = compact
+    data[str(idx)] = entry
     _safe_update(job_id, {"chunks_json": json.dumps(data, ensure_ascii=False)})
 
 
@@ -122,7 +128,6 @@ def main():
         "started_at": started,
         "run_url": _run_url(),
         "run_id": _run_id(),
-        "control": "run",
         "current_chunk": chunk_pos,
         "total_chunks": total_chunks,
     })
@@ -134,8 +139,10 @@ def main():
     streamed = [0]
     last_flush = [0.0]
     last_data = [[]]
+    last_stats = [{}]
 
     def on_progress(stats, current, total, scraped, admin=""):
+        last_stats[0] = stats
         now = time.time()
         if now - last_emit[0] < 15:
             return
@@ -179,26 +186,10 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"WARN streaming gagal: {exc}")
 
-    try:
-        manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data)
-    except ControlStop as stop:
-        checkpoint = {"chunk_index": chunk_idx, "chunk_label": chunk_label, "reason": stop.mode}
-        new_status = "paused" if stop.mode == "pause" else "cancelled"
-        _safe_update(job_id, {"status": new_status, "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False)})
-        _update_chunk_json(job_id, chunk_idx, chunk_label, new_status, streamed[0])
-        cloud.append_log(job_id, user, f"chunk {chunk_pos} dihentikan ({stop.mode}) pada target terakhir")
-        print("CHUNK_STOP " + json.dumps(checkpoint, ensure_ascii=False), flush=True)
-        return
-    except Exception as exc:  # noqa: BLE001
-        _safe_update(job_id, {"status": "failed", "error": str(exc)})
-        _update_chunk_json(job_id, chunk_idx, chunk_label, "failed", streamed[0])
-        cloud.append_log(job_id, user, f"chunk {chunk_pos} GAGAL: {exc}")
-        print(f"ERROR {exc}", flush=True)
-        raise
-
-    # Flush sisa baris yang belum terkirim.
-    remaining = last_data[0][streamed[0]:]
-    if remaining:
+    def flush_remaining():
+        remaining = last_data[0][streamed[0]:]
+        if not remaining:
+            return
         try:
             cloud.append_rows(result_sheet, [list(r) for r in remaining])
             streamed[0] = len(last_data[0])
@@ -206,7 +197,29 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"WARN flush akhir gagal: {exc}")
 
-    _update_chunk_json(job_id, chunk_idx, chunk_label, "done", streamed[0])
+    try:
+        manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data)
+    except ControlStop as stop:
+        checkpoint = {"chunk_index": chunk_idx, "chunk_label": chunk_label, "reason": stop.mode}
+        new_status = "paused" if stop.mode == "pause" else "cancelled"
+        flush_remaining()
+        _safe_update(job_id, {"status": new_status, "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False)})
+        _update_chunk_json(job_id, chunk_idx, chunk_label, new_status, streamed[0], last_stats[0])
+        cloud.append_log(job_id, user, f"chunk {chunk_pos} dihentikan ({stop.mode}) pada target terakhir")
+        print("CHUNK_STOP " + json.dumps(checkpoint, ensure_ascii=False), flush=True)
+        return
+    except Exception as exc:  # noqa: BLE001
+        flush_remaining()
+        _safe_update(job_id, {"status": "failed", "error": str(exc)})
+        _update_chunk_json(job_id, chunk_idx, chunk_label, "failed", streamed[0], last_stats[0])
+        cloud.append_log(job_id, user, f"chunk {chunk_pos} GAGAL: {exc}")
+        print(f"ERROR {exc}", flush=True)
+        raise
+
+    # Flush sisa baris yang belum terkirim.
+    flush_remaining()
+
+    _update_chunk_json(job_id, chunk_idx, chunk_label, "done", streamed[0], last_stats[0])
     cloud.append_log(
         job_id, user,
         f"chunk {chunk_pos} selesai: {manifest.get('records', 0)} records, {manifest.get('targets', 0)} target",

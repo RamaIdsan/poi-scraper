@@ -188,8 +188,12 @@ Kolom di tabel **Job Saya**:
 | Aksi | **Logs** · **Tab** · **Preview** · **CSV** · **Detail** |
 
 Tombol **Detail** membuka modal berisi: status, progress total, posisi chunk,
-records/listings, ETA, **statistik filter** (relevance/geo/duplicates dst.),
-dan tabel status **per chunk**.
+records/listings, ETA, **statistik filter gabungan semua chunk**
+(relevance/geo/duplicates dst.), daftar **target 0 hasil**, dan tabel status **per chunk**.
+
+> Dedup hasil memakai **Place_ID** lebih dulu (antar-chunk), lalu fallback
+> brand/nama/alamat/koordinat. Pemanggilan Sheets API di worker di-cache agar
+> hemat kuota saat beberapa job paralel.
 
 Tabel menyegar otomatis setiap 10 detik.
 

@@ -603,8 +603,8 @@ function setSyncing(on){
   $("sysDot").className = "kpi-dot " + (on ? "bg-amber-500" : "bg-emerald-500");
   var bar = $("topProgressBar");
   if (bar) bar.classList.toggle("hidden", !on);
-  var btn = $("btnRefresh");
-  if (btn) btn.classList.toggle("spin", on);
+  var icon = document.querySelector("#btnRefresh svg, #btnRefresh i");
+  if (icon) icon.classList.toggle("spin", on);
 }
 
 /* ============================================================
@@ -1043,6 +1043,28 @@ function openDetail(jobId){
   var overall = Number(job.overall_progress || 0);
   var total = Number(job.total_chunks || 0);
 
+  var agg = {};
+  var zeroTargets = [];
+  Object.keys(chunks).forEach(function(k){
+    var cs = (chunks[k] && chunks[k].stats) ? chunks[k].stats : null;
+    if (!cs) return;
+    Object.keys(cs).forEach(function(key){
+      if (key === "zero_targets"){
+        if (cs[key] && cs[key].length) zeroTargets = zeroTargets.concat(cs[key]);
+        return;
+      }
+      var v = Number(cs[key]);
+      if (!isNaN(v)) agg[key] = (agg[key] || 0) + v;
+    });
+  });
+  if (!Object.keys(agg).length && st){
+    Object.keys(st).forEach(function(k){
+      if (k === "zero_targets"){ if (st[k] && st[k].length) zeroTargets = zeroTargets.concat(st[k]); return; }
+      var v = Number(st[k]);
+      if (!isNaN(v)) agg[k] = Number(st[k]);
+    });
+  }
+
   function box(label, val){
     return '<div class="glass-soft rounded-xl p-3"><div class="text-[10px] uppercase text-slate-500 dark:text-slate-400">' + label +
       '</div><div class="font-bold">' + val + '</div></div>';
@@ -1058,11 +1080,19 @@ function openDetail(jobId){
   html += box("Selesai/Update", esc(job.finished_at || job.created_at || "-"));
   html += '</div>';
 
-  var keys = Object.keys(st);
+  var keys = Object.keys(agg);
   if (keys.length){
-    html += '<div class="mb-4"><div class="font-semibold mb-1">Statistik filter</div><div class="flex flex-wrap gap-2">';
-    keys.forEach(function(k){ html += '<span class="chip glass-soft">' + esc(k) + ': ' + esc(st[k]) + '</span>'; });
+    html += '<div class="mb-4"><div class="font-semibold mb-1">Statistik filter (semua chunk)</div><div class="flex flex-wrap gap-2">';
+    keys.forEach(function(k){ html += '<span class="chip glass-soft">' + esc(k) + ': ' + esc(num(agg[k])) + '</span>'; });
     html += '</div></div>';
+  }
+  if (zeroTargets.length){
+    var shownZero = zeroTargets.slice(0, 100);
+    html += '<div class="mb-4"><div class="font-semibold mb-1">Target 0 hasil (' + zeroTargets.length + ')</div>' +
+      '<div class="text-[11px] text-slate-500 dark:text-slate-400 max-h-40 overflow-auto scroll-thin glass-soft rounded-xl p-2">' +
+      shownZero.map(function(z){ return '<div>&bull; ' + esc(z) + '</div>'; }).join('') +
+      (zeroTargets.length > shownZero.length ? '<div>&hellip; +' + (zeroTargets.length - shownZero.length) + ' lainnya</div>' : '') +
+      '</div></div>';
   }
 
   var idxs = Object.keys(chunks).sort(function(a, b){ return Number(a) - Number(b); });

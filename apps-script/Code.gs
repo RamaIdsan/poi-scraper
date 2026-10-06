@@ -16,7 +16,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-08.2";
+var APP_VERSION = "2026-10-08.3";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -341,6 +341,8 @@ function jobControl_(user, payload, action) {
   }
 
   if (action === "cancel") {
+    if (status === "done") throw new Error("Job sudah selesai; tidak perlu dibatalkan.");
+    if (status === "cancelled") return { job_id: job.job_id, status: "cancelled" };
     var runId = String(job.run_id || "") || extractRunId_(job.run_url);
     if (runId) {
       try { githubCancelRun_(runId); }

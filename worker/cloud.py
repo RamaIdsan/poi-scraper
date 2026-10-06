@@ -30,13 +30,21 @@ def _creds():
     return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
 
 
-def _services():
-    from googleapiclient.discovery import build
+_SHEETS = None
+_DRIVE = None
+_ROW_CACHE = {}
+_TITLE_CACHE = {}
 
-    creds = _creds()
-    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    return sheets, drive
+
+def _services():
+    global _SHEETS, _DRIVE
+    if _SHEETS is None or _DRIVE is None:
+        from googleapiclient.discovery import build
+
+        creds = _creds()
+        _SHEETS = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        _DRIVE = build("drive", "v3", credentials=creds, cache_discovery=False)
+    return _SHEETS, _DRIVE
 
 
 def _col_letter(index):
@@ -49,14 +57,18 @@ def _col_letter(index):
 
 
 def find_job_row(sheet_id, job_id):
+    """Cari baris job; hasil pemetaan semua job di-cache agar hemat kuota API."""
     sheets, _ = _services()
+    cache_key = (sheet_id, job_id)
+    if cache_key in _ROW_CACHE:
+        return sheets, _ROW_CACHE[cache_key]
     result = sheets.spreadsheets().values().get(
         spreadsheetId=sheet_id, range=f"{SHEET_NAME}!A2:A"
     ).execute()
     for i, row in enumerate(result.get("values", [])):
-        if row and row[0] == job_id:
-            return sheets, i + 2
-    return sheets, None
+        if row and row[0]:
+            _ROW_CACHE[(sheet_id, row[0])] = i + 2
+    return sheets, _ROW_CACHE.get(cache_key)
 
 
 def update_job(job_id, fields):
@@ -112,17 +124,25 @@ def _spreadsheet_id():
 
 def _ensure_sheet(sheets, tab_name, headers):
     sid = _spreadsheet_id()
-    meta = sheets.spreadsheets().get(spreadsheetId=sid, fields="sheets.properties.title").execute()
-    titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
-    if tab_name not in titles:
-        sheets.spreadsheets().batchUpdate(
-            spreadsheetId=sid,
-            body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
-        ).execute()
+    key = (sid, tab_name)
+    if key not in _TITLE_CACHE:
+        meta = sheets.spreadsheets().get(spreadsheetId=sid, fields="sheets.properties.title").execute()
+        for s in meta.get("sheets", []):
+            _TITLE_CACHE[(sid, s["properties"]["title"])] = True
+    if key not in _TITLE_CACHE:
+        try:
+            sheets.spreadsheets().batchUpdate(
+                spreadsheetId=sid,
+                body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
+            ).execute()
+        except Exception as exc:  # noqa: BLE001
+            # Tab mungkin dibuat proses lain; abaikan bila sudah ada.
+            print(f"WARN addSheet: {exc}")
         sheets.spreadsheets().values().update(
             spreadsheetId=sid, range=f"{tab_name}!A1",
             valueInputOption="RAW", body={"values": [headers]},
         ).execute()
+        _TITLE_CACHE[key] = True
     return sid
 
 

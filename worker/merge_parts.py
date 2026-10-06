@@ -67,6 +67,16 @@ def main():
     full = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=s.OUTPUT_COLUMNS)
     full = full.reindex(columns=s.OUTPUT_COLUMNS).fillna("")
     before = len(full)
+
+    # 1) Dedup berdasarkan Place_ID (bila ada) agar duplikat lintas-chunk pasti hilang.
+    if "Place_ID" in full.columns:
+        pid = full["Place_ID"].astype(str).str.strip()
+        has_pid = pid != ""
+        by_pid = full[has_pid].drop_duplicates(subset=["Place_ID"])
+        rest = full[~has_pid]
+        full = pd.concat([by_pid, rest], ignore_index=True)
+
+    # 2) Dedup fallback berdasarkan brand/nama/alamat/koordinat.
     keys = [c for c in DEDUP_KEYS if c in full.columns]
     full = full.drop_duplicates(subset=keys) if keys else full.drop_duplicates()
 

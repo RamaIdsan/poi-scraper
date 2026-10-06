@@ -1446,6 +1446,10 @@ def main(
                 stats["listings_found"] += len(listing_urls)
                 if not listing_urls:
                     stats["zero_result_targets"] += 1
+                    zero_list = stats.setdefault("zero_targets", [])
+                    zero_list.append(admin)
+                    if len(zero_list) > 500:
+                        del zero_list[:-500]
                     logger.warning(f"0 listing untuk target '{admin}' (level={level}).")
 
                 for listing_no, listing_url in enumerate(listing_urls, start=1):
