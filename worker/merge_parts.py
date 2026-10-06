@@ -71,6 +71,10 @@ def main():
         )
     except Exception as exc:  # noqa: BLE001
         print(f"WARN upload Drive gagal: {exc}")
+        try:
+            cloud.update_job(job_id, {"error": "upload Drive gagal: " + str(exc)[:300]})
+        except Exception:  # noqa: BLE001
+            pass
 
     cloud.update_job(job_id, {
         "status": status,

@@ -185,10 +185,19 @@ def upload_csv(local_path, name=None, share_email=None):
     metadata = {"name": name or local_path.name}
     if folder_id:
         metadata["parents"] = [folder_id]
-    media = MediaFileUpload(str(local_path), mimetype="text/csv", resumable=False)
-    file = drive.files().create(
-        body=metadata, media_body=media, fields="id,webViewLink", supportsAllDrives=True
-    ).execute()
+    try:
+        media = MediaFileUpload(str(local_path), mimetype="text/csv", resumable=False)
+        file = drive.files().create(
+            body=metadata, media_body=media, fields="id,webViewLink", supportsAllDrives=True
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        # Fallback: unggah tanpa folder (mis. folder tidak dishare / ID salah).
+        print(f"WARN upload ke folder gagal ({exc}); mencoba tanpa folder.")
+        metadata.pop("parents", None)
+        media = MediaFileUpload(str(local_path), mimetype="text/csv", resumable=False)
+        file = drive.files().create(
+            body=metadata, media_body=media, fields="id,webViewLink", supportsAllDrives=True
+        ).execute()
     if share_email:
         try:
             drive.permissions().create(

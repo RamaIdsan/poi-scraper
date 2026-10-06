@@ -60,6 +60,11 @@ function nowStr_() {
   return Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyy-MM-dd HH:mm:ss");
 }
 
+function fmtVal_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, "Asia/Jakarta", "yyyy-MM-dd HH:mm:ss");
+  return v === null || v === undefined ? "" : String(v);
+}
+
 function hashKey_(key) {
   var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(key));
   return bytes.map(function (b) { return ("0" + (b & 0xff).toString(16)).slice(-2); }).join("");
@@ -220,8 +225,8 @@ function listJobs_(user) {
       : "";
     return {
       job_id: j.job_id || "", user: j.user || "", country: j.country || "", brand: j.brand || "",
-      status: j.status || "", progress: j.progress || "", created_at: j.created_at || "",
-      finished_at: j.finished_at || "", output_url: j.output_url || "", error: j.error || "",
+      status: j.status || "", progress: j.progress || "", created_at: fmtVal_(j.created_at),
+      finished_at: fmtVal_(j.finished_at), output_url: j.output_url || "", error: fmtVal_(j.error),
       current_target: j.current_target || "", listings_found: j.listings_found || 0,
       records: j.records || 0, eta: j.eta || "", run_url: j.run_url || "",
       result_sheet: j.result_sheet || "", result_url: tabUrl
