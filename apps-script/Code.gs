@@ -13,10 +13,10 @@ var JOB_HEADERS = [
   "run_id", "control", "checkpoint_json", "cancelled_at"
 ];
 var USER_HEADERS = [
-  "email", "api_key_hash", "quota", "used", "active", "created_at"
+  "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-08.1";
+var APP_VERSION = "2026-10-08.2";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -93,10 +93,10 @@ function findUserByKey_(key) {
   return null;
 }
 
-function appendUser_(email, keyHash, quota, active) {
+function appendUser_(email, keyHash, quota, active, apiKey) {
   var sh = tab_("Users", USER_HEADERS);
-  sh.appendRow([email, keyHash, quota, 0, active, nowStr_()]);
-  return { email: email, api_key_hash: keyHash, quota: quota, used: 0, active: active };
+  sh.appendRow([email, keyHash, quota, 0, active, nowStr_(), apiKey || ""]);
+  return { email: email, api_key_hash: keyHash, quota: quota, used: 0, active: active, api_key: apiKey || "" };
 }
 
 function verifyGoogleToken_(idToken) {
@@ -134,7 +134,7 @@ function resolveIdentity_(ident) {
   var user = findUserByEmail_(email);
   if (!user) {
     if (ident.idToken) {
-      user = appendUser_(email, "", Number(prop_("DEFAULT_QUOTA", "0")), true);
+      user = appendUser_(email, "", Number(prop_("DEFAULT_QUOTA", "0")), true, "");
     } else {
       throw new Error("User tidak terdaftar.");
     }
@@ -278,6 +278,82 @@ function diag_() {
 function canAccessJob_(user, job) {
   if (!job) return false;
   return isAdmin_(user.email) || String(job.user).toLowerCase() === String(user.email).toLowerCase();
+}
+
+function extractRunId_(url) {
+  var m = String(url || "").match(/\/runs\/(\d+)/);
+  return m ? m[1] : "";
+}
+
+function githubCancelRun_(runId) {
+  var owner = prop_("GITHUB_OWNER");
+  var repo = prop_("GITHUB_REPO");
+  var pat = prop_("GITHUB_PAT");
+  if (!owner || !repo || !pat) throw new Error("Konfigurasi GitHub belum lengkap.");
+  var url = "https://api.github.com/repos/" + owner + "/" + repo + "/actions/runs/" + runId + "/cancel";
+  var res = UrlFetchApp.fetch(url, {
+    method: "post",
+    headers: {
+      Authorization: "Bearer " + pat,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() >= 300) {
+    throw new Error("GitHub cancel gagal (" + res.getResponseCode() + "): " + res.getContentText());
+  }
+}
+
+function jobControl_(user, payload, action) {
+  var job = getJob_(payload.job_id);
+  if (!job) throw new Error("Job tidak ditemukan.");
+  if (!canAccessJob_(user, job)) throw new Error("Akses ditolak.");
+  var status = String(job.status || "").toLowerCase();
+
+  if (action === "pause") {
+    if (status !== "running" && status !== "dispatched") throw new Error("Job tidak sedang berjalan.");
+    setJobField_(job.job_id, "control", "pause");
+    log_(job.job_id, job.user, "Pause diminta oleh " + user.email);
+    return { job_id: job.job_id, status: "pausing" };
+  }
+
+  if (action === "resume") {
+    if (status !== "paused" && status !== "cancelled" && status !== "failed") {
+      throw new Error("Hanya job paused/cancelled/failed yang bisa dilanjutkan.");
+    }
+    var spec = JSON.parse(job.spec_json);
+    var chunks = {};
+    try { chunks = JSON.parse(job.chunks_json || "{}") || {}; } catch (e) { chunks = {}; }
+    var done = [];
+    Object.keys(chunks).forEach(function (k) {
+      var cs = String((chunks[k] || {}).status || "").toLowerCase();
+      if (cs === "done" && chunks[k].label) done.push(chunks[k].label);
+    });
+    if (done.length) spec.resume_done_chunks = done;
+    setJobField_(job.job_id, "control", "run");
+    setJobField_(job.job_id, "spec_json", JSON.stringify(spec));
+    setJobField_(job.job_id, "status", "queued");
+    setJobField_(job.job_id, "error", "");
+    log_(job.job_id, job.user, "Resume diminta oleh " + user.email + " (lewati " + done.length + " chunk selesai)");
+    dispatch();
+    return { job_id: job.job_id, status: "queued" };
+  }
+
+  if (action === "cancel") {
+    var runId = String(job.run_id || "") || extractRunId_(job.run_url);
+    if (runId) {
+      try { githubCancelRun_(runId); }
+      catch (e) { log_(job.job_id, job.user, "cancel API gagal: " + e); }
+    }
+    setJobField_(job.job_id, "control", "stop");
+    setJobField_(job.job_id, "status", "cancelled");
+    setJobField_(job.job_id, "cancelled_at", nowStr_());
+    log_(job.job_id, job.user, "Cancel diminta oleh " + user.email);
+    return { job_id: job.job_id, status: "cancelled" };
+  }
+
+  throw new Error("Aksi tidak dikenal: " + action);
 }
 
 function previewJob_(user, payload) {
@@ -445,14 +521,34 @@ function adminCreateKey_(email, quota) {
         sh.getRange(i + 1, 2).setValue(hashKey_(key));
         sh.getRange(i + 1, 3).setValue(Number(quota || 0));
         sh.getRange(i + 1, 5).setValue(true);
+        sh.getRange(i + 1, 7).setValue(key);
         break;
       }
     }
   } else {
-    appendUser_(email, hashKey_(key), Number(quota || 0), true);
+    appendUser_(email, hashKey_(key), Number(quota || 0), true, key);
   }
   shareSheetViewer_(email);
   return { email: email, api_key: key };
+}
+
+function adminGetKey_(email) {
+  var user = findUserByEmail_(email);
+  if (!user) throw new Error("User tidak ditemukan: " + email);
+  if (!user.api_key) throw new Error("Key user ini tersimpan sebagai hash saja (dibuat sebelum fitur ini). Jalankan reset key sekali.");
+  return { email: user.email, api_key: user.api_key, quota: Number(user.quota || 0), used: Number(user.used || 0), active: user.active };
+}
+
+function adminSetQuota_(email, quota) {
+  var sh = tab_("Users", USER_HEADERS);
+  var values = sh.getDataRange().getValues();
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][0]).toLowerCase() === String(email).toLowerCase()) {
+      sh.getRange(i + 1, 3).setValue(Number(quota || 0));
+      return { email: email, quota: Number(quota || 0) };
+    }
+  }
+  throw new Error("User tidak ditemukan: " + email);
 }
 
 function shareSheetViewer_(email) {
@@ -478,7 +574,10 @@ function adminSetActive_(email, active) {
 
 function adminListUsers_() {
   return readTable_("Users", USER_HEADERS).map(function (u) {
-    return { email: u.email, quota: u.quota, used: u.used, active: u.active, created_at: u.created_at };
+    return {
+      email: u.email, quota: u.quota, used: u.used, active: u.active,
+      created_at: fmtVal_(u.created_at), has_key: !!u.api_key
+    };
   });
 }
 
@@ -549,6 +648,15 @@ function handleAction_(action, payload, ident, isUi) {
     if (action === "jobs.stats") {
       return { ok: true, data: jobStats_(user) };
     }
+    if (action === "jobs.pause") {
+      return { ok: true, data: jobControl_(user, payload, "pause") };
+    }
+    if (action === "jobs.resume") {
+      return { ok: true, data: jobControl_(user, payload, "resume") };
+    }
+    if (action === "jobs.cancel") {
+      return { ok: true, data: jobControl_(user, payload, "cancel") };
+    }
     if (action === "admin.users") {
       if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
       return { ok: true, data: adminListUsers_() };
@@ -556,6 +664,14 @@ function handleAction_(action, payload, ident, isUi) {
     if (action === "admin.createKey") {
       if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
       return { ok: true, data: adminCreateKey_(payload.email, payload.quota) };
+    }
+    if (action === "admin.getKey") {
+      if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
+      return { ok: true, data: adminGetKey_(payload.email) };
+    }
+    if (action === "admin.setQuota") {
+      if (!isAdmin_(user.email)) throw new Error("Hanya admin.");
+      return { ok: true, data: adminSetQuota_(payload.email, payload.quota) };
     }
     if (action === "admin.setActive") {
       if (!isAdmin_(user.email)) throw new Error("Hanya admin.");

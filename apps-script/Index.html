@@ -352,7 +352,7 @@
         <table class="w-full text-sm">
           <thead>
             <tr class="text-left text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-              <th class="py-2 pr-3">Email</th><th class="py-2 pr-3">Kuota</th><th class="py-2 pr-3">Used</th><th class="py-2">Aktif</th>
+              <th class="py-2 pr-3">Email</th><th class="py-2 pr-3">Kuota</th><th class="py-2 pr-3">Used</th><th class="py-2 pr-3">Aktif</th><th class="py-2">Aksi</th>
             </tr>
           </thead>
           <tbody id="users"></tbody>
@@ -1009,6 +1009,26 @@ function renderRelevanceCards(){
 }
 function setRelevance(v){ RELEVANCE = v; renderRelevanceCards(); }
 
+function jobPause(jobId){
+  api("jobs.pause", { job_id: jobId }).then(function(){
+    toast("Permintaan pause terkirim — job berhenti setelah target berjalan.", "info");
+    refreshAll(true);
+  }).catch(function(err){ toast("Gagal pause: " + err.message, "err"); });
+}
+function jobCancel(jobId){
+  if (!confirm("Hentikan job ini? Progres yang sudah ter-stream tetap tersimpan.")) return;
+  api("jobs.cancel", { job_id: jobId }).then(function(){
+    toast("Job dihentikan (cancelled).", "info");
+    refreshAll(true);
+  }).catch(function(err){ toast("Gagal stop: " + err.message, "err"); });
+}
+function jobResume(jobId){
+  api("jobs.resume", { job_id: jobId }).then(function(){
+    toast("Job dilanjutkan — menunggu antrean.", "ok");
+    refreshAll(true);
+  }).catch(function(err){ toast("Gagal resume: " + err.message, "err"); });
+}
+
 function openDetail(jobId){
   var job = JOBS.filter(function(x){ return String(x.job_id) === String(jobId); })[0];
   if (!job){ toast("Job tidak ditemukan", "err"); return; }
@@ -1141,6 +1161,8 @@ function statusBadge(j){
   if (s === "running" || s === "dispatched") return '<span class="chip bg-sky-500/15 text-sky-600 dark:text-sky-300"><span class="spin inline-flex"><i data-lucide="loader-2" class="w-3 h-3"></i></span>' + esc(s) + '</span>';
   if (s === "done") return '<span class="chip bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"><i data-lucide="check" class="w-3 h-3"></i>done</span>';
   if (s === "failed") return '<span class="chip bg-rose-500/15 text-rose-600 dark:text-rose-300" title="' + esc(j.error || "error") + '"><i data-lucide="x" class="w-3 h-3"></i>failed</span>';
+  if (s === "paused" || s === "pausing") return '<span class="chip bg-amber-500/15 text-amber-600 dark:text-amber-300"><i data-lucide="pause" class="w-3 h-3"></i>' + esc(s) + '</span>';
+  if (s === "cancelled") return '<span class="chip bg-slate-500/20 text-slate-600 dark:text-slate-300"><i data-lucide="square" class="w-3 h-3"></i>cancelled</span>';
   return '<span class="chip bg-slate-500/15 text-slate-600 dark:text-slate-300">' + esc(s || "-") + '</span>';
 }
 
@@ -1166,6 +1188,16 @@ function progressCell(j){
 
 function actionButtons(j){
   var html = '<div class="flex flex-wrap gap-1.5">';
+  var st = String(j.status || "").toLowerCase();
+  var idArg = '\'' + esc(j.job_id) + '\'';
+  if (st === "running" || st === "dispatched"){
+    html += '<button class="btn px-2 py-1 text-[11px] glass-soft inline-flex items-center gap-1" onclick="jobPause(' + idArg + ')"><i data-lucide="pause" class="w-3 h-3"></i>Pause</button>';
+    html += '<button class="btn px-2 py-1 text-[11px] glass-soft text-rose-500 inline-flex items-center gap-1" onclick="jobCancel(' + idArg + ')"><i data-lucide="square" class="w-3 h-3"></i>Stop</button>';
+  } else if (st === "queued"){
+    html += '<button class="btn px-2 py-1 text-[11px] glass-soft text-rose-500 inline-flex items-center gap-1" onclick="jobCancel(' + idArg + ')"><i data-lucide="square" class="w-3 h-3"></i>Stop</button>';
+  } else if (st === "paused" || st === "cancelled" || st === "failed"){
+    html += '<button class="btn px-2 py-1 text-[11px] glass-soft text-emerald-500 inline-flex items-center gap-1" onclick="jobResume(' + idArg + ')"><i data-lucide="play" class="w-3 h-3"></i>Resume</button>';
+  }
   if (j.run_url) html += '<a href="' + esc(j.run_url) + '" target="_blank" class="btn px-2 py-1 text-[11px] glass-soft inline-flex items-center gap-1"><i data-lucide="scroll-text" class="w-3 h-3"></i>Logs</a>';
   else html += '<button class="btn px-2 py-1 text-[11px] glass-soft inline-flex items-center gap-1" onclick="openLogs(\'' + esc(j.job_id) + '\')"><i data-lucide="scroll-text" class="w-3 h-3"></i>Logs</button>';
   if (j.result_url) html += '<a href="' + esc(j.result_url) + '" target="_blank" class="btn px-2 py-1 text-[11px] glass-soft inline-flex items-center gap-1"><i data-lucide="table" class="w-3 h-3"></i>Tab</a>';
@@ -1362,13 +1394,55 @@ function adminCreate(){
 function loadUsers(){
   api("admin.users", {}).then(function(users){
     $("users").innerHTML = users.map(function(u){
-      return '<tr class="border-b border-slate-200/60 dark:border-slate-800/60">' +
-        '<td class="py-2 pr-3">' + esc(u.email) + '</td>' +
+      var active = String(u.active).toUpperCase() === "TRUE";
+      var emailArg = "'" + esc(u.email) + "'";
+      var actions = '<div class="flex flex-wrap gap-1">' +
+        '<button class="btn px-2 py-0.5 text-[11px] glass-soft" onclick="adminGetKey(' + emailArg + ')">Copy key</button>' +
+        '<button class="btn px-2 py-0.5 text-[11px] glass-soft" onclick="adminSetQuota(' + emailArg + ')">Kuota</button>' +
+        '<button class="btn px-2 py-0.5 text-[11px] glass-soft" onclick="adminResetKey(' + emailArg + ',' + Number(u.quota || 0) + ')">Reset</button>' +
+        '<button class="btn px-2 py-0.5 text-[11px] glass-soft" onclick="adminToggleActive(' + emailArg + ',' + (active ? "false" : "true") + ')">' + (active ? "Nonaktifkan" : "Aktifkan") + '</button>' +
+        '</div>';
+      return '<tr class="border-b border-slate-200/60 dark:border-slate-800/60 align-top">' +
+        '<td class="py-2 pr-3">' + esc(u.email) + (u.has_key ? '' : ' <span class="text-[10px] text-amber-500">(reset utk lihat key)</span>') + '</td>' +
         '<td class="py-2 pr-3">' + esc(u.quota || 0) + '</td>' +
         '<td class="py-2 pr-3">' + esc(u.used || 0) + '</td>' +
-        '<td class="py-2">' + (String(u.active).toUpperCase() === "TRUE" ? '<span class="text-emerald-500">aktif</span>' : '<span class="text-rose-500">nonaktif</span>') + '</td></tr>';
+        '<td class="py-2 pr-3">' + (active ? '<span class="text-emerald-500">aktif</span>' : '<span class="text-rose-500">nonaktif</span>') + '</td>' +
+        '<td class="py-2">' + actions + '</td></tr>';
     }).join("");
   }).catch(function(){});
+}
+
+function _showKey(d){
+  $("adminMsg").innerHTML = 'API key <b>' + esc(d.email) + '</b>: ' +
+    '<code class="terminal text-xs px-2 py-1 rounded bg-slate-900 text-emerald-300 break-all">' + esc(d.api_key) + '</code>';
+  $("adminMsg").className = "msg text-sm rounded-lg p-2.5 mt-3 bg-emerald-500/15 text-emerald-600 dark:text-emerald-300";
+  copyText(d.api_key, "API key");
+}
+function adminGetKey(email){
+  api("admin.getKey", { email: email }).then(_showKey)
+    .catch(function(err){ showMsg($("adminMsg"), "Gagal: " + err.message, false); });
+}
+function adminSetQuota(email){
+  var q = prompt("Kuota baru untuk " + email + " (0 = unlimited):", "0");
+  if (q === null) return;
+  api("admin.setQuota", { email: email, quota: Number(q || 0) }).then(function(){
+    toast("Kuota " + email + " = " + Number(q || 0), "ok");
+    loadUsers();
+  }).catch(function(err){ showMsg($("adminMsg"), "Gagal: " + err.message, false); });
+}
+function adminResetKey(email, quota){
+  if (!confirm("Reset API key untuk " + email + "? Key lama tidak berlaku.")) return;
+  api("admin.createKey", { email: email, quota: Number(quota || 0) }).then(function(d){
+    _showKey(d);
+    toast("Key baru dibuat untuk " + d.email, "ok");
+    loadUsers();
+  }).catch(function(err){ showMsg($("adminMsg"), "Gagal: " + err.message, false); });
+}
+function adminToggleActive(email, active){
+  api("admin.setActive", { email: email, active: active }).then(function(){
+    toast((active ? "Diaktifkan: " : "Dinonaktifkan: ") + email, "info");
+    loadUsers();
+  }).catch(function(err){ showMsg($("adminMsg"), "Gagal: " + err.message, false); });
 }
 
 /* ============================================================

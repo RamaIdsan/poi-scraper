@@ -126,6 +126,15 @@ def _ensure_sheet(sheets, tab_name, headers):
     return sid
 
 
+def fetch_tab_rows(tab_name):
+    """Ambil semua baris tab (termasuk header) sebagai list of list."""
+    sheets, _ = _services()
+    sid = _spreadsheet_id()
+    return sheets.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{tab_name}!A:ZZ"
+    ).execute().get("values", [])
+
+
 def ensure_tab(tab_name, headers):
     """Buat tab bila belum ada, lalu kosongkan isinya (sisakan header)."""
     sheets, _ = _services()

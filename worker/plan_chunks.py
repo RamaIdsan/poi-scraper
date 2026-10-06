@@ -29,13 +29,18 @@ def main():
         labels = [c["scope"][top_level][0] for c in chunks]
 
     n = len(labels)
+    done = set(spec.get("resume_done_chunks") or [])
+    entries = [(i, label) for i, label in enumerate(labels) if not (label and label in done)]
+    if not entries:
+        entries = [(0, "__SKIP__")]
+
     matrix = {
-        "chunk": labels,
-        "idx": list(range(n)),
-        "total": [n] * n,
+        "chunk": [e[1] for e in entries],
+        "idx": [e[0] for e in entries],
+        "total": [n] * len(entries),
     }
 
-    print(json.dumps({"matrix": matrix, "chunks": n, "counts": counts}, ensure_ascii=False))
+    print(json.dumps({"matrix": matrix, "chunks": n, "todo": len(entries), "counts": counts}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

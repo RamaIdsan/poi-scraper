@@ -46,6 +46,21 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print(f"WARN gagal baca {path}: {exc}")
 
+    # Sertakan data yang sudah ada di tab hasil (penting untuk resume/pause).
+    try:
+        tab_rows = cloud.fetch_tab_rows(result_sheet)
+        if len(tab_rows) > 1:
+            header = tab_rows[0]
+            body = tab_rows[1:]
+            try:
+                tab_frame = pd.DataFrame(body, columns=header).reindex(columns=s.OUTPUT_COLUMNS).fillna("")
+                if not tab_frame.empty:
+                    frames.append(tab_frame)
+            except Exception as exc:  # noqa: BLE001
+                print(f"WARN tab frame gagal: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN fetch tab gagal: {exc}")
+
     finished = time.strftime("%Y-%m-%d %H:%M:%S")
     status = "done" if args.workflow_result == "success" else "failed"
 

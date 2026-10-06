@@ -193,6 +193,18 @@ dan tabel status **per chunk**.
 
 Tabel menyegar otomatis setiap 10 detik.
 
+### 4.1 Kontrol job (Stop / Pause / Resume)
+Tombol kontrol muncul pada baris job sesuai status:
+- **Pause** (job `running`): worker memeriksa kolom `control` tiap ±15–30 dtk, lalu berhenti
+  **rapi** setelah target yang sedang berjalan. Status jadi `paused`.
+- **Stop/Cancel** (job `running`/`queued`): membatalkan run di GitHub + status `cancelled`.
+  Data yang sudah ter-stream tetap aman di tab hasil.
+- **Resume** (job `paused`/`cancelled`/`failed`): menjalankan ulang job; chunk yang sudah
+  `done` dilewati, dan hasil lama di tab digabung + dedup saat merge, sehingga tidak hilang.
+
+Progres gabungan memakai kolom `overall_progress` (dihitung dari posisi chunk), jadi label
+`Chunk x/y · z%` mencerminkan total, bukan 100% per chunk.
+
 ---
 
 ## 5. Di mana hasil disimpan?
@@ -221,7 +233,11 @@ Tabel menyegar otomatis setiap 10 detik.
 - **Admin** (email di `ADMIN_EMAILS`) melihat **semua** job dan mengelola user.
 - **User biasa** melihat **job miliknya** saja di dashboard.
 - Membuat user: panel **Admin - API Key** → isi email + kuota (`0` = unlimited) →
-  **Buat / Reset API Key**. Kunci ditampilkan **sekali**; salin dan berikan ke user.
+  **Buat / Reset API Key**. Kunci ditampilkan dan bisa disalin ulang kapan saja.
+- Tabel user punya aksi: **Copy key** (tampilkan key tersimpan), **Kuota** (ubah tanpa
+  reset), **Reset** (buat key baru), dan **Aktifkan/Nonaktifkan**.
+- API key disimpan **plaintext** di kolom `Users.api_key` (Sheet hanya diakses owner +
+  service account) agar bisa disalin kembali; hash tetap dipakai untuk validasi.
 - Saat key dibuat, spreadsheet otomatis di-share sebagai **Viewer** ke email user
   (sehingga mereka bisa membuka tab hasil — namun secara teknis bisa melihat semua tab).
 - Kuota dihitung per job yang dibuat.
@@ -236,6 +252,8 @@ Tabel menyegar otomatis setiap 10 detik.
 | `setAdminEmails("a@x,b@y")` | Ganti daftar admin |
 | `setMaxParallel(n)` | Atur jumlah job paralel |
 | `setDriveFolder("id_folder")` | Set folder Drive untuk ekspor CSV |
+| `admin.getKey(email)` (UI) | Tampilkan/ salin API key user (plaintext) |
+| `admin.setQuota(email, quota)` (UI) | Ubah kuota tanpa reset key |
 | `exportCompleted()` | Ekspor CSV semua job `done` yang belum punya `output_url` |
 | `exportJobCsv("job_id")` | Ekspor CSV satu job tertentu |
 | `setupTriggers()` | Pasang trigger dispatcher (1 mnt) + exporter CSV (5 mnt) |
@@ -272,7 +290,13 @@ curl -s -X POST "$WEBAPP_URL" -H "Content-Type: application/json" -d '{
 | `jobs.preview` | `job_id`, `limit` | Sampel baris tab hasil (untuk modal Preview) |
 | `jobs.logs` | `job_id`, `limit` | Log job dari tab `Logs` |
 | `jobs.stats` | – | Agregat KPI (done/active/records) |
-| `admin.createKey` | `email`, `quota` | Hanya admin |
+| `jobs.pause` | `job_id` | Minta pause (berhenti rapi setelah target berjalan) |
+| `jobs.resume` | `job_id` | Lanjutkan job paused/cancelled/failed (lewati chunk selesai) |
+| `jobs.cancel` | `job_id` | Batalkan run di GitHub + status `cancelled` |
+| `admin.createKey` | `email`, `quota` | Hanya admin (buat/reset key) |
+| `admin.getKey` | `email` | Hanya admin; ambil API key untuk disalin |
+| `admin.setQuota` | `email`, `quota` | Hanya admin; ubah kuota tanpa reset key |
+| `admin.setActive` | `email`, `active` | Hanya admin; aktif/nonaktifkan user |
 | `admin.users` | – | Hanya admin |
 | `admin.diag` | – | Hanya admin; diagnostik spreadsheet |
 

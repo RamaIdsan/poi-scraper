@@ -18,6 +18,17 @@ import cloud  # noqa: E402
 STREAM_INTERVAL = 20  # detik
 
 
+class ControlStop(BaseException):
+    """Sinyal berhenti kooperatif dari kolom `control` di Sheet.
+
+    Sengaja turunan BaseException agar tidak tertelan `except Exception`
+    di dalam scraper.
+    """
+
+    def __init__(self, mode):
+        self.mode = mode
+
+
 def _safe_update(job_id, fields):
     if not job_id:
         return
@@ -44,6 +55,10 @@ def _run_url():
     if repo and run_id:
         return f"{server}/{repo}/actions/runs/{run_id}"
     return ""
+
+
+def _run_id():
+    return os.environ.get("GITHUB_RUN_ID", "")
 
 
 def _update_chunk_json(job_id, idx, label, status, records):
@@ -79,6 +94,11 @@ def main():
     chunk_label = args.provinsi or "semua"
     chunk_pos = f"{chunk_idx + 1}/{total_chunks}"
 
+    if args.provinsi == "__SKIP__":
+        cloud.append_log(job_id, user, "resume: seluruh chunk sudah selesai, chunk dilewati")
+        print("CHUNK_DONE " + json.dumps({"skipped": True}, ensure_ascii=False), flush=True)
+        return
+
     if args.provinsi:
         spec.setdefault("scope", {})
         spec["scope"][profile["levels"][0]] = [args.provinsi]
@@ -101,6 +121,8 @@ def main():
         "status": "running",
         "started_at": started,
         "run_url": _run_url(),
+        "run_id": _run_id(),
+        "control": "run",
         "current_chunk": chunk_pos,
         "total_chunks": total_chunks,
     })
@@ -118,6 +140,12 @@ def main():
         if now - last_emit[0] < 15:
             return
         last_emit[0] = now
+        try:
+            ctrl = str(cloud.get_job_field(job_id, "control") or "").strip().lower()
+        except Exception:
+            ctrl = ""
+        if ctrl in ("pause", "stop"):
+            raise ControlStop(ctrl)
         local = (current / total) if total else 1.0
         overall = round(((chunk_idx + local) / total_chunks) * 100, 2)
         elapsed = now - start_ts
@@ -153,6 +181,14 @@ def main():
 
     try:
         manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data)
+    except ControlStop as stop:
+        checkpoint = {"chunk_index": chunk_idx, "chunk_label": chunk_label, "reason": stop.mode}
+        new_status = "paused" if stop.mode == "pause" else "cancelled"
+        _safe_update(job_id, {"status": new_status, "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False)})
+        _update_chunk_json(job_id, chunk_idx, chunk_label, new_status, streamed[0])
+        cloud.append_log(job_id, user, f"chunk {chunk_pos} dihentikan ({stop.mode}) pada target terakhir")
+        print("CHUNK_STOP " + json.dumps(checkpoint, ensure_ascii=False), flush=True)
+        return
     except Exception as exc:  # noqa: BLE001
         _safe_update(job_id, {"status": "failed", "error": str(exc)})
         _update_chunk_json(job_id, chunk_idx, chunk_label, "failed", streamed[0])
