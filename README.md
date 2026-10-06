@@ -88,7 +88,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | isi penuh file JSON service account |
 | `SHEET_ID` | ID spreadsheet |
 | `DRIVE_FOLDER_ID` | ID folder Drive |
-| `SHARE_EMAIL` | `magang_location@sat.co.id` |
+| `SHARE_EMAIL` | `ramaidsan9995@gmail.com` |
 
 ### 5. GitHub PAT (untuk Apps Script memicu workflow)
 Fine-grained token → Repository access: `poi-scraper` → Permissions:
@@ -113,7 +113,9 @@ Simpan token (dipakai di Script Properties `GITHUB_PAT`).
 7. Buka URL Web App.
 
 ### 7. Buat API key pertama
-Di dashboard (login sebagai `magang_location@sat.co.id` yang ada di `ADMIN_EMAILS`), panel Admin → isi email + kuota → **Buat / Reset API Key**. Simpan key yang tampil (hanya ditampilkan sekali).
+Di dashboard (login sebagai `ramaidsan9995@gmail.com` yang ada di `ADMIN_EMAILS`), panel Admin → isi email + kuota → **Buat / Reset API Key**. Simpan key yang tampil (hanya ditampilkan sekali).
+
+> Bila `setup()` sudah pernah dijalankan, `ADMIN_EMAILS` tidak ikut berubah. Set manual via fungsi `setAdminEmails("ramaidsan9995@gmail.com")` atau edit Script Properties.
 
 ---
 

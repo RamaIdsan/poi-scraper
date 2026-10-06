@@ -414,7 +414,7 @@ function setup() {
     GITHUB_REPO: "poi-scraper",
     GITHUB_REF: "main",
     INDEX_BASE: "https://raw.githubusercontent.com/RamaIdsan/poi-scraper/main/admin",
-    ADMIN_EMAILS: "magang_location@sat.co.id",
+    ADMIN_EMAILS: "ramaidsan9995@gmail.com",
     DEFAULT_QUOTA: "0"
   };
   Object.keys(defaults).forEach(function (k) {
@@ -434,4 +434,9 @@ function setupTriggers() {
 function setSheetId(id) {
   PropertiesService.getScriptProperties().setProperty("SHEET_ID", String(id).trim());
   Logger.log("SHEET_ID diset.");
+}
+
+function setAdminEmails(emails) {
+  PropertiesService.getScriptProperties().setProperty("ADMIN_EMAILS", String(emails).trim());
+  Logger.log("ADMIN_EMAILS = " + emails);
 }
