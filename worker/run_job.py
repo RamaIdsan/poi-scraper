@@ -67,18 +67,9 @@ def main():
         print(f"ERROR {exc}", flush=True)
         raise
 
-    file_id, link = "", ""
-    try:
-        file_id, link = cloud.upload_csv(
-            manifest["output"],
-            name=Path(manifest["output"]).name,
-            share_email=os.environ.get("SHARE_EMAIL"),
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"WARN upload Drive gagal: {exc}")
-
-    result = {**manifest, "file_id": file_id, "url": link}
-    print("CHUNK_DONE " + json.dumps(result, ensure_ascii=False), flush=True)
+    # Chunk tidak diupload ke Drive; cukup sebagai artifact. Job "merge" yang
+    # menggabungkan semua chunk dan mengunggah satu file final ke Drive.
+    print("CHUNK_DONE " + json.dumps(manifest, ensure_ascii=False), flush=True)
     # status final ditentukan oleh job merge (agar link final = hasil gabung)
 
 
