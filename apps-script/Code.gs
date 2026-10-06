@@ -115,7 +115,7 @@ function resolveIdentity_(ident) {
     email = verifyGoogleToken_(ident.idToken);
   } else if (ident.apiKey) {
     var byKey = findUserByKey_(ident.apiKey);
-    if (!byKey) throw new Error("API key tidak valid.");
+    if (!byKey) throw new Error("API key tidak valid. Jika tab Users masih kosong, jalankan bootstrapAdmin() di editor Apps Script untuk membuat key pertama.");
     email = byKey.email;
   } else {
     throw new Error("Autentikasi diperlukan (id_token atau api_key).");
@@ -439,4 +439,43 @@ function setSheetId(id) {
 function setAdminEmails(emails) {
   PropertiesService.getScriptProperties().setProperty("ADMIN_EMAILS", String(emails).trim());
   Logger.log("ADMIN_EMAILS = " + emails);
+}
+
+/**
+ * Bootstrap user admin pertama (dijalankan sekali dari editor Apps Script).
+ * Membuat/reset API key untuk email admin, lalu mencetaknya ke Execution log.
+ * Salin "API KEY: ..." dan tempel di kolom API key dashboard.
+ */
+function bootstrapAdmin() {
+  tab_("Users", USER_HEADERS);
+  tab_("Jobs", JOB_HEADERS);
+  tab_("Logs", ["timestamp", "message"]);
+
+  var email = String(prop_("ADMIN_EMAILS", "ramaidsan9995@gmail.com")).split(",")[0].trim();
+  if (!email) throw new Error("ADMIN_EMAILS kosong. Jalankan setAdminEmails('ramaidsan9995@gmail.com') dulu.");
+
+  var res = adminCreateKey_(email, 0);
+  Logger.log("============================================================");
+  Logger.log("ADMIN   : " + res.email);
+  Logger.log("API KEY : " + res.api_key);
+  Logger.log("Simpan key ini (hanya tampil di log). Tempel ke dashboard.");
+  Logger.log("============================================================");
+  return res.api_key;
+}
+
+/** Hash sebuah API key (untuk debug / verifikasi manual). */
+function hashApiKey(key) {
+  var h = hashKey_(key);
+  Logger.log("hash(" + key + ") = " + h);
+  return h;
+}
+
+/** Cek user terdaftar atau belum. */
+function listApiUsers() {
+  var users = readTable_("Users", USER_HEADERS);
+  Logger.log("Total users: " + users.length);
+  users.forEach(function (u) {
+    Logger.log("- " + u.email + " | quota=" + u.quota + " | used=" + u.used + " | active=" + u.active);
+  });
+  return users;
 }

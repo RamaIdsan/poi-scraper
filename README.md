@@ -112,10 +112,15 @@ Simpan token (dipakai di Script Properties `GITHUB_PAT`).
    - Who has access: **Anyone**
 7. Buka URL Web App.
 
-### 7. Buat API key pertama
-Di dashboard (login sebagai `ramaidsan9995@gmail.com` yang ada di `ADMIN_EMAILS`), panel Admin → isi email + kuota → **Buat / Reset API Key**. Simpan key yang tampil (hanya ditampilkan sekali).
+### 7. Bootstrap admin & API key pertama
+Panel Admin hanya muncul setelah login, jadi key pertama harus dibuat dari editor:
+1. (Bila perlu) jalankan `setAdminEmails("ramaidsan9995@gmail.com")`.
+2. Jalankan fungsi **`bootstrapAdmin()`** dari editor Apps Script.
+3. Buka **Execution log** (View → Logs) dan salin baris `API KEY : poi_...`.
+4. Buka Web App, tempel key di kolom API key → login. Panel Admin muncul untuk membuat key user lain.
 
-> Bila `setup()` sudah pernah dijalankan, `ADMIN_EMAILS` tidak ikut berubah. Set manual via fungsi `setAdminEmails("ramaidsan9995@gmail.com")` atau edit Script Properties.
+> Key hanya tampil di log. Bila lupa, jalankan `bootstrapAdmin()` lagi (membuat key baru) atau cek daftar user dengan `listApiUsers()`.
+> Setiap kali mengubah `Code.gs`/`Index.html`, lakukan **Deploy → Manage deployments → Edit → New version** agar Web App memakai kode terbaru.
 
 ---
 
