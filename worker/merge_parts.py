@@ -70,11 +70,9 @@ def main():
             out_path, name=out_path, share_email=os.environ.get("SHARE_EMAIL")
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"WARN upload Drive gagal: {exc}")
-        try:
-            cloud.update_job(job_id, {"error": "upload Drive gagal: " + str(exc)[:300]})
-        except Exception:  # noqa: BLE001
-            pass
+        # Tidak fatal: Apps Script (akun pemilik) akan mengekspor CSV dari tab hasil
+        # via exportCompleted(), karena service account tidak punya kuota Drive.
+        print(f"WARN upload Drive gagal (akan diekspor oleh Apps Script): {exc}")
 
     cloud.update_job(job_id, {
         "status": status,

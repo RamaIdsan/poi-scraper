@@ -178,8 +178,11 @@ Tabel menyegar otomatis setiap 10 detik.
    - Selama scraping, baris **mengalir (streaming)** ke tab sehingga bisa dipantau.
    - Saat selesai, job *merge* menulis ulang tab dengan data **bersih (dedup)**.
    - Bisa ada **duplikat sementara** selama proses, hilang saat selesai.
-2. **File CSV final** di folder Google Drive (`Output_final_<job_id>.csv`),
-   dibagikan ke `SHARE_EMAIL`. Link tersedia di kolom **csv**.
+2. **File CSV final** di folder Google Drive (`Output_<brand>_<job8>.csv`).
+   - Dibuat oleh **Apps Script** (akun Anda) via `exportCompleted()` karena service
+     account tidak punya kuota Drive pribadi. Trigger berjalan tiap 5 menit.
+   - Link tersedia di kolom **csv**. Bila belum siap, tombol **csv** otomatis memakai
+     export URL dari tab hasil sehingga tetap bisa diunduh.
 3. **Tab `Logs`**: catatan milestone (mulai chunk, selesai, error).
 4. **Log lengkap** ada di GitHub Actions (tombol **log**).
 
@@ -207,7 +210,10 @@ Tabel menyegar otomatis setiap 10 detik.
 | `hashApiKey(key)` | Hash sebuah key (debug) |
 | `setAdminEmails("a@x,b@y")` | Ganti daftar admin |
 | `setMaxParallel(n)` | Atur jumlah job paralel |
-| `setupTriggers()` | Pasang trigger dispatcher tiap menit |
+| `setDriveFolder("id_folder")` | Set folder Drive untuk ekspor CSV |
+| `exportCompleted()` | Ekspor CSV semua job `done` yang belum punya `output_url` |
+| `exportJobCsv("job_id")` | Ekspor CSV satu job tertentu |
+| `setupTriggers()` | Pasang trigger dispatcher (1 mnt) + exporter CSV (5 mnt) |
 
 ---
 
@@ -272,7 +278,7 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 | **Job `failed`** | Lihat tombol **log** (GitHub Actions) dan tab `Logs`. |
 | **Hasil kosong / sedikit** | Perkecil level target, pakai **Pecah ke unit terkecil**, atau naikkan **Tile density**. Google juga bisa memblokir IP GitHub. |
 | **Tab hasil tidak terisi** | Pastikan service account masih **Editor** di spreadsheet; cek tab `Logs`. Catatan: fitur streaming/kolom detail hanya jalan jika **repo GitHub sudah di-push** (worker terbaru). |
-| **`output_url` kosong / CSV tidak ada** | Folder Drive tidak dishare ke service account atau `DRIVE_FOLDER_ID` salah. Hasil tetap ada di tab `Result_...`; perbaiki share folder lalu jalankan ulang. Worker kini mencoba upload ke akar Drive sebagai fallback dan menulis pesan di kolom `error`. |
+| **`output_url` kosong / CSV tidak ada** | Penyebab umum: **service account tidak punya kuota Drive pribadi**. Solusi: CSV diekspor oleh **Apps Script** (akun Anda). Set `DRIVE_FOLDER_ID` (Script Property / `setDriveFolder(id)`) dan pastikan trigger `exportCompleted` aktif (`setupTriggers()`), atau jalankan `exportCompleted()` manual. Tombol **csv** di dashboard juga bisa mengunduh langsung dari tab hasil (export URL) sebelum file Drive siap. |
 | **Progress format lama `x% (n records) \| a/b`** | Worker di GitHub masih versi lama → `git push origin main` lalu jalankan job baru. |
 | **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |
 

@@ -104,8 +104,10 @@ Simpan token (dipakai di Script Properties `GITHUB_PAT`).
 4. Project Settings → Script Properties, tambahkan:
    - `SHEET_ID`
    - `GITHUB_PAT`
-   - (opsional) `GITHUB_OWNER=RamaIdsan`, `GITHUB_REPO=poi-scraper`, `GITHUB_REF=main`, `INDEX_BASE`, `ADMIN_EMAILS`, `DEFAULT_QUOTA`, `OAUTH_CLIENT_ID`
+   - `DRIVE_FOLDER_ID` (folder Drive hasil; boleh juga via `setDriveFolder("id")`)
+   - (opsional) `GITHUB_OWNER=RamaIdsan`, `GITHUB_REPO=poi-scraper`, `GITHUB_REF=main`, `INDEX_BASE`, `ADMIN_EMAILS`, `DEFAULT_QUOTA`, `MAX_PARALLEL`, `OAUTH_CLIENT_ID`
    > `setup()` akan mengisi nilai default bila kosong.
+   > CSV diekspor oleh Apps Script (`exportCompleted`, trigger tiap 5 menit) karena service account tidak punya kuota Drive pribadi.
 5. Jalankan fungsi `setup()` lalu `setupTriggers()` (izinkan akses saat diminta).
 6. Deploy → New deployment → Web app:
    - Execute as: **Me**

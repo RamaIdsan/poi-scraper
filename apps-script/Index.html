@@ -384,7 +384,9 @@ function loadJobs(){
       var actions = [];
       if (j.run_url) actions.push('<a class="dl" href="' + esc(j.run_url) + '" target="_blank">log</a>');
       if (j.result_url) actions.push('<a class="dl" href="' + esc(j.result_url) + '" target="_blank">tab</a>');
-      if (j.output_url) actions.push('<a class="dl" href="' + esc(j.output_url) + '" target="_blank">csv</a>');
+      var csvUrl = j.output_url || "";
+      if (!csvUrl && j.result_url) csvUrl = j.result_url.replace("/edit#gid=", "/export?format=csv&gid=");
+      if (csvUrl) actions.push('<a class="dl" href="' + esc(csvUrl) + '" target="_blank">csv</a>');
       if (j.error) actions.push('<span class="muted" title="' + esc(j.error) + '">err</span>');
       html += "<tr><td>" + esc(j.brand) + "</td><td class='muted'>" + esc(j.user || "") + "</td><td>" + pill +
         "</td><td>" + esc(j.progress || "-") + "</td><td class='muted'>" + esc(j.current_target || "-") +

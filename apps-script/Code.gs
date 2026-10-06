@@ -14,7 +14,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-06.4";
+var APP_VERSION = "2026-10-06.5";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -537,15 +537,112 @@ function setup() {
 
 function setupTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === "dispatch") ScriptApp.deleteTrigger(t);
+    var fn = t.getHandlerFunction();
+    if (fn === "dispatch" || fn === "exportCompleted") ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger("dispatch").timeBased().everyMinutes(1).create();
-  Logger.log("Trigger dispatch tiap menit dipasang.");
+  ScriptApp.newTrigger("exportCompleted").timeBased().everyMinutes(5).create();
+  Logger.log("Trigger dispatch (1 mnt) & exportCompleted (5 mnt) dipasang.");
+}
+
+// ------------------------------------------------------------
+// Ekspor hasil ke CSV di Drive memakai AKUN PEMILIK (kuota sendiri).
+// Service account tidak punya kuota Drive pribadi, jadi upload dari worker
+// sering gagal. Fungsi ini menyusul setelah job selesai.
+// ------------------------------------------------------------
+function exportCompleted() {
+  var folderId = prop_("DRIVE_FOLDER_ID");
+  if (!folderId) {
+    Logger.log("exportCompleted: DRIVE_FOLDER_ID belum diset. Lewati.");
+    return 0;
+  }
+  var sh = tab_("Jobs", JOB_HEADERS);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return 0;
+  var head = values[0].map(function (h) { return String(h); });
+  var col = {};
+  head.forEach(function (h, i) { col[h] = i; });
+
+  var exported = 0;
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    var status = String(row[col.status] || "").toLowerCase();
+    var outUrl = String(row[col.output_url] || "");
+    var resultSheet = String(row[col.result_sheet] || "");
+    if (status !== "done" || outUrl || !resultSheet) continue;
+    try {
+      var res = exportSheetToDrive_(resultSheet, row[col.brand], row[col.job_id], folderId, row[col.user]);
+      sh.getRange(r + 1, col.output_url + 1).setValue(res.url);
+      if (col.output_file_id !== undefined) sh.getRange(r + 1, col.output_file_id + 1).setValue(res.id);
+      log_(row[col.job_id], row[col.user], "CSV diekspor ke Drive: " + res.url);
+      exported++;
+    } catch (e) {
+      log_(row[col.job_id], row[col.user], "export CSV gagal: " + e);
+    }
+  }
+  Logger.log("exportCompleted: " + exported + " job diekspor.");
+  return exported;
+}
+
+function exportJobCsv(jobId) {
+  var sh = tab_("Jobs", JOB_HEADERS);
+  var values = sh.getDataRange().getValues();
+  var head = values[0].map(function (h) { return String(h); });
+  var col = {};
+  head.forEach(function (h, i) { col[h] = i; });
+  var folderId = prop_("DRIVE_FOLDER_ID");
+  if (!folderId) throw new Error("DRIVE_FOLDER_ID belum diset.");
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][col.job_id]) !== String(jobId)) continue;
+    var res = exportSheetToDrive_(values[r][col.result_sheet], values[r][col.brand], jobId, folderId, values[r][col.user]);
+    sh.getRange(r + 1, col.output_url + 1).setValue(res.url);
+    if (col.output_file_id !== undefined) sh.getRange(r + 1, col.output_file_id + 1).setValue(res.id);
+    Logger.log("CSV: " + res.url);
+    return res;
+  }
+  throw new Error("Job tidak ditemukan: " + jobId);
+}
+
+function exportSheetToDrive_(tabName, brand, jobId, folderId, userEmail) {
+  var ss = sheet_();
+  var sh = ss.getSheetByName(tabName);
+  if (!sh) throw new Error("Tab hasil tidak ada: " + tabName);
+  var values = sh.getDataRange().getValues();
+  if (!values.length) values = [[""]];
+
+  var lines = values.map(function (row) {
+    return row.map(function (cell) {
+      var s;
+      if (cell instanceof Date) {
+        s = Utilities.formatDate(cell, "Asia/Jakarta", "yyyy-MM-dd HH:mm:ss");
+      } else {
+        s = cell === null || cell === undefined ? "" : String(cell);
+      }
+      if (s.indexOf('"') >= 0) s = s.replace(/"/g, '""');
+      if (s.indexOf(",") >= 0 || s.indexOf('"') >= 0 || s.indexOf("\n") >= 0) s = '"' + s + '"';
+      return s;
+    }).join(",");
+  });
+  var csv = "\ufeff" + lines.join("\r\n");
+
+  var safe = String(brand || "result").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "result";
+  var name = "Output_" + safe + "_" + String(jobId).slice(0, 8) + ".csv";
+  var blob = Utilities.newBlob(csv, "text/csv", name);
+  var file = DriveApp.getFolderById(folderId).createFile(blob);
+  if (userEmail) {
+    try { file.addViewer(String(userEmail).trim().toLowerCase()); } catch (e) {}
+  }
+  return { id: file.getId(), url: file.getUrl() };
 }
 
 function setSheetId(id) {
   PropertiesService.getScriptProperties().setProperty("SHEET_ID", String(id).trim());
   Logger.log("SHEET_ID diset.");
+}
+
+function setDriveFolder(id) {
+  PropertiesService.getScriptProperties().setProperty("DRIVE_FOLDER_ID", String(id).trim());
+  Logger.log("DRIVE_FOLDER_ID diset. Jalankan exportCompleted() untuk mengekspor hasil yang tertunda.");
 }
 
 function setAdminEmails(emails) {
