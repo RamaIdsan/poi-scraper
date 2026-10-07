@@ -931,28 +931,43 @@ def looks_like_country(address, profile, extra_terms=None):
     return bool(tokens & accept)
 
 
-def relevance_ok(expected_brand, name, mode="mirip"):
-    """Brand match. mode: 'persis' = substring saja, 'mirip' = lentur, 'longgar' = tanpa filter."""
+def relevance_ok(expected_brand, name, mode="mirip", category="", aliases=None):
+    """Brand match terhadap nama ATAU kategori Google.
+
+    mode: 'persis' = substring saja, 'mirip' = lentur (default), 'longgar' = tanpa filter.
+    aliases: alias tambahan untuk pencocokan (bukan query tambahan).
+    """
     if mode == "longgar":
         return True
-    exp_norm = normalize_for_match(expected_brand)
+
+    expected_list = []
+    for value in (list(aliases) if aliases else []) + [expected_brand]:
+        norm = normalize_for_match(value)
+        if norm and norm not in expected_list:
+            expected_list.append(norm)
+    if not expected_list:
+        return True
+
     name_norm = normalize_for_match(name)
-    if not exp_norm:
-        return True
-    if exp_norm in name_norm:
-        return True
-    if mode == "persis":
+    cat_norm = normalize_for_match(category)
+    haystacks = [h for h in (name_norm, cat_norm) if h]
+    if not haystacks:
         return False
-    exp_compact = exp_norm.replace(" ", "")
-    name_compact = name_norm.replace(" ", "")
-    if exp_compact and exp_compact in name_compact:
-        return True
-    exp_tokens = set(exp_norm.split())
-    name_tokens = set(name_norm.split())
-    if not exp_tokens:
-        return True
-    overlap = len(exp_tokens & name_tokens) / len(exp_tokens)
-    return overlap >= 0.6
+
+    for exp_norm in expected_list:
+        exp_compact = exp_norm.replace(" ", "")
+        exp_tokens = set(exp_norm.split())
+        for hay in haystacks:
+            if exp_norm in hay:
+                return True
+            if mode != "persis":
+                hay_compact = hay.replace(" ", "")
+                if exp_compact and exp_compact in hay_compact:
+                    return True
+                hay_tokens = set(hay.split())
+                if exp_tokens and (len(exp_tokens & hay_tokens) / len(exp_tokens)) >= 0.6:
+                    return True
+    return False
 
 
 def collect_listing_urls(page, patience=3, max_scrolls=100, scroll_wait_ms=2500, logger=None):
@@ -1053,6 +1068,16 @@ def scrape_operating_hours(page):
     except Exception:
         pass
 
+    if not operating_hours:
+        try:
+            body_text = clean_text(page.locator("body").inner_text(timeout=2000)).lower()
+            if "open 24 hours" in body_text or "24 hours" in body_text:
+                return {"24h": True}
+            if "temporarily closed" in body_text or "permanently closed" in body_text:
+                return {"closed": True}
+        except Exception:
+            pass
+
     return operating_hours
 
 
@@ -1123,10 +1148,22 @@ def scrape_payment(page):
         except Exception:
             pass
 
+    if not payment_values:
+        try:
+            nodes = page.locator(
+                "//h2[contains(translate(., 'PAYMENTS', 'payments'), 'payments')]/following-sibling::*//span"
+            )
+            for i in range(nodes.count()):
+                value = clean_text(nodes.nth(i).inner_text(timeout=1000))
+                if value and value.lower() != "payments" and value not in payment_values:
+                    payment_values.append(value)
+        except Exception:
+            pass
+
     return ", ".join(payment_values)
 
 
-def scrape_listing(page, expected_brand="", filter_relevance=False, relevance_mode="mirip", logger=None):
+def scrape_listing(page, expected_brand="", filter_relevance=False, relevance_mode="mirip", logger=None, aliases=None):
     try:
         current_url = canonical_url(page.url)
         latitude, longitude = extract_lat_long_from_url(current_url)
@@ -1155,6 +1192,7 @@ def scrape_listing(page, expected_brand="", filter_relevance=False, relevance_mo
         website = first_attribute(page, [
             "a[data-item-id='authority'][href^='http']",
             "a[data-item-id='authority']",
+            "div[data-item-id='authority'] a[href^='http']",
         ], "href", timeout=1500)
 
         phone = first_text(page, [
@@ -1164,12 +1202,17 @@ def scrape_listing(page, expected_brand="", filter_relevance=False, relevance_mo
         ], timeout=2500)
         if phone.startswith("tel:"):
             phone = phone[4:]
+        ext_match = re.search(r"(?:ext\.?|x)\s*(\d{2,6})", phone, re.I)
         phone = re.sub(r"[^\d+\s()\-]", "", phone).strip()
         phone = re.sub(r"\s+", " ", phone)
+        if ext_match:
+            phone = (phone + " ext. " + ext_match.group(1)).strip()
 
         building = ""
         try:
             building_elements = page.locator("div.AeaXub div.Io6YTe.fontBodyMedium")
+            if building_elements.count() == 0:
+                building_elements = page.locator("div[class*='Io6YTe']")
             for i in range(building_elements.count()):
                 text = clean_text(building_elements.nth(i).inner_text(timeout=1000))
                 if re.search(r"^Located in:\s*", text, re.I):
@@ -1191,7 +1234,7 @@ def scrape_listing(page, expected_brand="", filter_relevance=False, relevance_mo
         status = scrape_status(page)
         payment = scrape_payment(page)
 
-        if filter_relevance and not relevance_ok(expected_brand, name, relevance_mode):
+        if filter_relevance and not relevance_ok(expected_brand, name, relevance_mode, category, aliases):
             return None, {
                 "reason": "relevance_filter_not_contains",
                 "name": name,
@@ -1250,9 +1293,10 @@ def record_signature(scraped):
 
 
 def build_seen_sets(data):
-    """Rebuild dedup sets from previously saved output rows."""
+    """Rebuild dedup sets dari baris output yang sudah ada (untuk resume)."""
     seen_legacy = set()
     seen_sig = set()
+    seen_phone = set()
     for row in data:
         if len(row) < 14:
             continue
@@ -1268,7 +1312,11 @@ def build_seen_sets(data):
                 seen_sig.add(("geo", norm_name, round(float(lat), 4), round(float(lon), 4)))
         except (TypeError, ValueError):
             pass
-    return seen_legacy, seen_sig
+
+        phone_digits = re.sub(r"\D", "", str(row[7] or ""))
+        if norm_name and phone_digits:
+            seen_phone.add((norm_name, phone_digits))
+    return seen_legacy, seen_sig, seen_phone
 
 
 # ============================================================
@@ -1295,6 +1343,7 @@ def main(
     relevance_mode="mirip",
     keep_no_coords=False,
     country_vocab=None,
+    aliases=None,
 ):
     df = read_target_file(input_file)
     total_rows = len(df)
@@ -1306,7 +1355,7 @@ def main(
     logger = setup_logger(str(log_path))
 
     data = load_existing_output(save_filename) if resume else []
-    seen_legacy, seen_sig = build_seen_sets(data)
+    seen_legacy, seen_sig, seen_phone = build_seen_sets(data)
 
     checkpoint = load_checkpoint(state_path) if resume else None
     start_row = 0
@@ -1317,7 +1366,7 @@ def main(
 
     if not resume:
         data = []
-        seen_legacy, seen_sig = set(), set()
+        seen_legacy, seen_sig, seen_phone = set(), set(), set()
 
     first_country = df.iloc[0]["country"] if total_rows else "indonesia"
     profile = get_profile(first_country)
@@ -1460,7 +1509,7 @@ def main(
 
                         scraped, error = scrape_listing(
                             detail_page, expected_brand=category, filter_relevance=filter_relevance,
-                            relevance_mode=relevance_mode, logger=logger
+                            relevance_mode=relevance_mode, logger=logger, aliases=aliases
                         )
 
                         if error:
@@ -1499,18 +1548,24 @@ def main(
 
                         signature = record_signature(scraped)
                         legacy = legacy_identity(name, address, mapped_category)
-                        if signature in seen_sig or (any(legacy) and legacy in seen_legacy):
+                        phone_digits = re.sub(r"\D", "", str(scraped.get("phone", "") or ""))
+                        phone_key = (normalize_for_match(name), phone_digits)
+                        if (signature in seen_sig
+                                or (any(legacy) and legacy in seen_legacy)
+                                or (phone_digits and phone_key in seen_phone)):
                             stats["duplicates"] += 1
                             continue
 
                         seen_sig.add(signature)
                         if any(legacy):
                             seen_legacy.add(legacy)
+                        if phone_digits:
+                            seen_phone.add(phone_key)
 
                         data.append([
                             category, admin, name, scraped["local_name"], mapped_category,
                             address, scraped["building"], scraped["phone"],
-                            json.dumps(scraped["hours"], ensure_ascii=False),
+                            (json.dumps(scraped["hours"], ensure_ascii=False) if scraped["hours"] else ""),
                             scraped["latitude"], scraped["longitude"], scraped["status"],
                             scraped["website"], scraped["payment"],
                             scraped.get("place_id", ""), row_country, level, admin,
@@ -1756,8 +1811,9 @@ def run_job(spec_path, progress_callback=None, data_callback=None):
         progress_cb=_cb,
         data_cb=_dcb,
         relevance_mode=relevance_mode,
-        keep_no_coords=bool(params.get("keep_no_coords", False)),
+        keep_no_coords=bool(params.get("keep_no_coords", True)),
         country_vocab=build_country_vocab(admin_df),
+        aliases=spec.get("aliases") or [],
     )
 
     manifest = {

@@ -43,7 +43,7 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ## 3. Panduan Dashboard (membuat job)
 
-> **Tampilan baru (v2026-10-08.4)**: UI modern dengan Tailwind + Lucide, tema
+> **Tampilan baru (v2026-10-08.6)**: UI modern dengan Tailwind + Lucide, tema
 > gelap/terang (ikut sistem + toggle), 4 kartu KPI, level target berupa kartu pilihan,
 > multi-pilih wilayah berbentuk chip, modal **Preview**, **Logs**, dan **Job Detail**.
 > Konfigurasi Lanjutan kini punya **Preset cakupan** (Cepat/Seimbang/Maksimal),
@@ -57,7 +57,14 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ### 3.2 Brand / kata kunci
 Nama tempat yang dicari di Google Maps. Contoh: `Alfamart`, `Indomaret`, `Jollibee`.
-Pencocokan nama bersifat lentur (mis. "Alfa Mart" tetap cocok dengan "Alfamart").
+Pencocokan bersifat lentur (mis. "Alfa Mart" tetap cocok dengan "Alfamart") dan kini
+mencocokkan **nama ATAU kategori Google** — sehingga kata kunci generik seperti
+`Traditional Market` / `Bus Station` tidak lagi membuang hasil.
+
+**Alias**: tulis beberapa nama dipisah `|`, mis. `Alfamart | Alfa Mart | Alfamidi`.
+Alias dipakai untuk **pencocokan** (query tetap satu) sehingga recall naik tanpa menambah waktu.
+
+> Untuk kata kunci generik, sistem menyarankan mode **Longgar** atau **Mirip**.
 
 ### 3.3 Level target
 **Tingkat wilayah yang dijadikan titik pencarian.** Sistem akan membuat satu target
@@ -190,7 +197,8 @@ Kolom di tabel **Job Saya**:
 Tombol **Detail** membuka modal berisi: status, progress total, posisi chunk,
 records/listings, ETA, **statistik filter gabungan semua chunk**
 (relevance/geo/duplicates dst.), daftar **target 0 hasil**, **coverage per wilayah**
-(chunk selesai + bar + jumlah Zero per provinsi), dan tombol
+(chunk selesai + bar + jumlah Zero per provinsi), **fill-rate kolom** (contoh 500 baris:
+phone/website/hours/payment/building dst.), dan tombol
 **Ulangi hanya target 0 hasil** (membuat job baru khusus target yang kosong).
 
 **Notifikasi**: tombol lonceng di topbar mengaktifkan notifikasi browser; toast
@@ -359,6 +367,10 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 - Google Sheets: **10 juta sel/spreadsheet**.
 - IP GitHub (Azure) lebih mudah diblokir Google → hasil bersifat **best-effort**.
 - Streaming memunculkan duplikat sementara; dibersihkan saat selesai.
+- **Jam operasional**: kosong = sel kosong; `{"24h":true}` = buka 24 jam;
+  `{"closed":true}` = tutup sementara/permanen.
+- **Listing tanpa koordinat** tetap diambil (lat/long kosong sebagai penanda) —
+  default `keep_no_coords=true`.
 - Paralel 3 (default) menaikkan peluang rate-limit; bisa diturunkan via `setMaxParallel(n)`.
 - Public repo: menit Actions gratis; kode + CSV admin publik.
 

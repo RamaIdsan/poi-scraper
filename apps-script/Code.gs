@@ -16,7 +16,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-08.5";
+var APP_VERSION = "2026-10-08.6";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -179,9 +179,12 @@ function incrementUsed_(email) {
 function createJob_(user, payload) {
   checkQuota_(user);
   var country = String(payload.country || "indonesia").toLowerCase();
-  var brand = String(payload.brand || "").trim();
-  if (!brand) throw new Error("Brand wajib diisi.");
+  var brandRaw = String(payload.brand || "").trim();
+  if (!brandRaw) throw new Error("Brand wajib diisi.");
   if (country !== "indonesia" && country !== "philippines") throw new Error("Negara tidak dikenal.");
+  var aliasList = brandRaw.split("|").map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+  var brand = aliasList[0] || brandRaw;
 
   var rawParams = payload.params || {};
   var relMode = String(rawParams.relevance_mode || "mirip").toLowerCase();
@@ -189,7 +192,7 @@ function createJob_(user, payload) {
   var params = {
     filter_relevance: rawParams.filter_relevance !== false,
     relevance_mode: relMode,
-    keep_no_coords: !!rawParams.keep_no_coords,
+    keep_no_coords: rawParams.keep_no_coords !== false,
     headless: true
   };
   var radius = Number(rawParams.radius_km);
@@ -209,6 +212,9 @@ function createJob_(user, payload) {
     result_sheet: resultTab.name,
     params: params
   };
+  if (aliasList.length > 1) {
+    spec.aliases = aliasList;
+  }
   if (payload.explicit_admins && payload.explicit_admins.length) {
     spec.explicit_admins = payload.explicit_admins;
   }
@@ -403,7 +409,7 @@ function previewJob_(user, payload) {
   if (!tabName) throw new Error("Job ini tidak memiliki tab hasil.");
   var sh = sheet_().getSheetByName(tabName);
   if (!sh) throw new Error("Tab hasil tidak ada: " + tabName);
-  var limit = Math.max(1, Math.min(50, Number(payload.limit || 10)));
+  var limit = Math.max(1, Math.min(500, Number(payload.limit || 10)));
   var values = sh.getDataRange().getValues();
   if (!values.length) return { headers: [], rows: [], total: 0 };
   var headers = values[0].map(function (h) { return fmtVal_(h); });

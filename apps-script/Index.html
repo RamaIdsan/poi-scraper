@@ -172,10 +172,11 @@
             <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">Brand / kata kunci</label>
             <div class="relative">
               <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
-              <input id="brand" placeholder="Alfamart" autocomplete="off"
+              <input id="brand" placeholder="Alfamart (boleh alias: Alfamart | Alfa Mart)" autocomplete="off"
                 class="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-sm">
             </div>
             <div id="brandChips" class="flex flex-wrap gap-1.5 mt-2"></div>
+            <p id="brandHint" class="help muted"></p>
           </div>
 
           <div>
@@ -633,7 +634,7 @@ function tryLogin(){
     if (me.is_admin){ $("adminBox").classList.remove("hidden"); loadUsers(); }
     loadCountry();
     renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
-    renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell();
+    renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell(); brandHintCheck();
     refreshAll(true);
     startPolling();
     icons();
@@ -924,6 +925,9 @@ function recalc(){
   var txt = "Perkiraan: <b>" + num(n) + "</b> target × " + per + " pencarian = <b>" + num(searches) + "</b> pencarian";
   txt += " · estimasi kasar <b>" + humanizeDuration(estSec) + "</b>";
   if (warn) txt += ' · <span class="text-rose-500 font-semibold">sangat besar, bisa lama / kena limit</span>';
+  if ($("level").value === "provinsi" && $("mode").value === "unit"){
+    txt += ' · <span class="text-amber-500 font-semibold">level provinsi + unit terpilih cakupannya kasar; pertimbangkan "Pecah ke unit terkecil"</span>';
+  }
   var el = $("estimate");
   el.innerHTML = txt;
   var card = $("estimateCard");
@@ -1205,8 +1209,34 @@ function renderDetail(job){
     html += '<div class="text-xs text-slate-500 dark:text-slate-400">Belum ada data chunk.</div>';
   }
 
+  html += '<div id="detailFill" class="mt-4"></div>';
   $("detailBody").innerHTML = html;
   openModal("modalDetail");
+  loadFillRates(job);
+}
+
+function loadFillRates(job){
+  if (!job || !job.result_sheet || !job.job_id) return;
+  api("jobs.preview", { job_id: job.job_id, limit: 500 }).then(function(d){
+    var host = $("detailFill");
+    if (!host || !d || !d.headers || !d.rows || !d.rows.length) return;
+    var colIdx = {};
+    d.headers.forEach(function(h, i){ colIdx[h] = i; });
+    var cols = ["Name_geocode", "Category_geocode", "Address_geocode", "Phone_Number_geocode",
+                "Website_geocode", "Operating_Hours_geocode", "Payment_geocode", "Building_geocode", "Latitude_geocode"];
+    var chips = cols.map(function(c){
+      var i = colIdx[c];
+      if (i === undefined) return "";
+      var filled = d.rows.filter(function(r){
+        var v = r[i] == null ? "" : String(r[i]).trim();
+        return v !== "" && v !== "{}" && v !== "[]";
+      }).length;
+      var pct = Math.round((filled / d.rows.length) * 100);
+      return '<span class="chip glass-soft">' + esc(c.replace("_geocode", "")) + ': ' + pct + '%</span>';
+    }).join("");
+    host.innerHTML = '<div class="font-semibold mb-1">Fill-rate (contoh ' + d.rows.length + ' dari ' + num(d.total) + ' baris)</div>' +
+      '<div class="flex flex-wrap gap-2">' + chips + '</div>';
+  }).catch(function(){});
 }
 
 function renderBrandChips(){
@@ -1220,7 +1250,27 @@ function renderBrandChips(){
   }).join("");
   icons();
 }
-function setBrand(b){ $("brand").value = b; }
+function setBrand(b){ $("brand").value = b; brandHintCheck(); }
+
+var GENERIC_WORDS = [
+  "market", "station", "mall", "university", "airport", "bus", "terminal",
+  "hospital", "school", "church", "mosque", "park", "hotel", "restaurant",
+  "supermarket", "bank", "office", "store", "shop"
+];
+function brandHintCheck(){
+  var el = $("brandHint");
+  if (!el) return;
+  var v = String($("brand").value || "").toLowerCase();
+  if (!v){ el.textContent = ""; return; }
+  var generic = GENERIC_WORDS.some(function(w){ return v.indexOf(w) >= 0; });
+  if (generic){
+    el.innerHTML = "Kata kunci tampak generik (bukan merek). Pertimbangkan mode <b>Longgar</b> atau <b>Mirip</b> (nama/kategori) agar hasil tidak dibuang.";
+  } else if (v.indexOf("|") >= 0){
+    el.innerHTML = "Alias terdeteksi: pencocokan memakai semua alias (query tetap satu).";
+  } else {
+    el.textContent = "";
+  }
+}
 
 function renderStatusFilter(){
   var host = $("statusFilter");
@@ -1578,10 +1628,11 @@ $("level") && $("level").addEventListener("change", syncLevelUI);
 $("mode") && $("mode").addEventListener("change", function(){ renderModeCards(); recalc(); });
 $("tile") && $("tile").addEventListener("change", function(){ renderTileCards(); recalc(); });
 $("brand") && $("brand").addEventListener("keydown", function(e){ if (e.key === "Enter") submitJob(e); });
+$("brand") && $("brand").addEventListener("input", brandHintCheck);
 window.addEventListener("load", function(){
   applyTheme(localStorage.getItem(THEME_KEY) || "system");
   renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
-  renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell();
+  renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell(); brandHintCheck();
   icons();
   initConfig();
 });
