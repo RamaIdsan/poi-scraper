@@ -2,11 +2,16 @@
 
 Dipakai oleh GitHub Actions:
   python worker/run_job.py --spec spec.json --provinsi "Abra" --chunk-index 0 --total-chunks 81
+
+Semua penulisan ke Google Sheets dilakukan lewat thread latar (non-blocking) agar
+proses scraping tidak menunggu jaringan.
 """
 import argparse
 import json
 import os
+import queue
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -29,7 +34,43 @@ class ControlStop(BaseException):
         self.mode = mode
 
 
+class Writer:
+    """Thread penulis tunggal: menjaga urutan & tidak memblokir scraping."""
+
+    def __init__(self):
+        self.q = queue.Queue()
+        self.errors = []
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while True:
+            item = self.q.get()
+            try:
+                if item is None:
+                    return
+                fn, args = item
+                try:
+                    fn(*args)
+                except Exception as exc:  # noqa: BLE001
+                    self.errors.append(str(exc))
+                    print(f"WARN writer: {exc}", flush=True)
+            finally:
+                self.q.task_done()
+
+    def submit(self, fn, *args):
+        self.q.put((fn, args))
+
+    def drain(self):
+        self.q.join()
+
+    def stop(self):
+        self.q.put(None)
+        self.thread.join(timeout=20)
+
+
 def _safe_update(job_id, fields):
+    """Update sinkron (dipakai untuk status penting sebelum loop)."""
     if not job_id:
         return
     try:
@@ -62,7 +103,7 @@ def _run_id():
 
 
 def _update_chunk_json(job_id, idx, label, status, records, stats=None):
-    """Catat status tiap chunk di kolom chunks_json (chunk berjalan serial)."""
+    """Catat status tiap chunk di kolom chunks_json (dijalankan di thread writer)."""
     try:
         raw = cloud.get_job_field(job_id, "chunks_json") or ""
         data = json.loads(raw) if raw.strip().startswith("{") else {}
@@ -72,12 +113,11 @@ def _update_chunk_json(job_id, idx, label, status, records, stats=None):
         data = {}
     entry = {"label": label, "status": status, "records": records}
     if stats:
-        # Simpan hanya angka ringkas; daftar zero_targets tidak dimasukkan agar
-        # kolom chunks_json tidak melebihi batas 50.000 karakter.
-        compact = {k: v for k, v in stats.items() if k != "zero_targets"}
-        entry["stats"] = compact
+        # Hanya angka ringkas; daftar zero_targets tidak dimasukkan agar kolom
+        # chunks_json tidak melebihi batas 50.000 karakter.
+        entry["stats"] = {k: v for k, v in stats.items() if k != "zero_targets"}
     data[str(idx)] = entry
-    _safe_update(job_id, {"chunks_json": json.dumps(data, ensure_ascii=False)})
+    cloud.update_job(job_id, {"chunks_json": json.dumps(data, ensure_ascii=False)})
 
 
 def _append_zero_targets(job_id, zero_list):
@@ -98,7 +138,7 @@ def _append_zero_targets(job_id, zero_list):
             existing.append(z)
             seen.add(z)
     existing = existing[-500:]
-    _safe_update(job_id, {"zero_targets_json": json.dumps(existing, ensure_ascii=False)})
+    cloud.update_job(job_id, {"zero_targets_json": json.dumps(existing, ensure_ascii=False)})
 
 
 def main():
@@ -152,8 +192,14 @@ def main():
         "current_chunk": chunk_pos,
         "total_chunks": total_chunks,
     })
-    _update_chunk_json(job_id, chunk_idx, chunk_label, "running", 0)
-    cloud.append_log(job_id, user, f"chunk {chunk_pos} mulai (wilayah='{chunk_label}')")
+
+    writer = Writer()
+
+    def _async(fn, *fn_args):
+        writer.submit(fn, *fn_args)
+
+    _async(_update_chunk_json, job_id, chunk_idx, chunk_label, "running", 0, None)
+    _async(cloud.append_log, job_id, user, f"chunk {chunk_pos} mulai (wilayah='{chunk_label}')")
 
     start_ts = time.time()
     last_emit = [0.0]
@@ -178,7 +224,7 @@ def main():
         overall = round(((chunk_idx + local) / total_chunks) * 100, 2)
         elapsed = now - start_ts
         eta = (elapsed / current) * (total - current) if current > 0 else 0
-        _safe_update(job_id, {
+        _async(cloud.update_job, job_id, {
             "progress": f"chunk {chunk_pos} · {round(local * 100, 1)}%",
             "overall_progress": overall,
             "current_chunk": chunk_pos,
@@ -199,24 +245,20 @@ def main():
         new_rows = data[streamed[0]:]
         if not new_rows:
             return
-        try:
-            cloud.append_rows(result_sheet, [list(r) for r in new_rows])
-            streamed[0] = len(data)
-            last_flush[0] = now
-            _safe_update(job_id, {"records": streamed[0]})
-        except Exception as exc:  # noqa: BLE001
-            print(f"WARN streaming gagal: {exc}")
+        rows = [list(r) for r in new_rows]
+        streamed[0] = len(data)
+        last_flush[0] = now
+        _async(cloud.append_rows, result_sheet, rows)
+        _async(cloud.update_job, job_id, {"records": streamed[0]})
 
     def flush_remaining():
         remaining = last_data[0][streamed[0]:]
         if not remaining:
             return
-        try:
-            cloud.append_rows(result_sheet, [list(r) for r in remaining])
-            streamed[0] = len(last_data[0])
-            _safe_update(job_id, {"records": streamed[0]})
-        except Exception as exc:  # noqa: BLE001
-            print(f"WARN flush akhir gagal: {exc}")
+        rows = [list(r) for r in remaining]
+        streamed[0] = len(last_data[0])
+        _async(cloud.append_rows, result_sheet, rows)
+        _async(cloud.update_job, job_id, {"records": streamed[0]})
 
     try:
         manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data)
@@ -224,30 +266,37 @@ def main():
         checkpoint = {"chunk_index": chunk_idx, "chunk_label": chunk_label, "reason": stop.mode}
         new_status = "paused" if stop.mode == "pause" else "cancelled"
         flush_remaining()
-        _append_zero_targets(job_id, last_stats[0].get("zero_targets", []))
-        _safe_update(job_id, {"status": new_status, "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False)})
-        _update_chunk_json(job_id, chunk_idx, chunk_label, new_status, streamed[0], last_stats[0])
-        cloud.append_log(job_id, user, f"chunk {chunk_pos} dihentikan ({stop.mode}) pada target terakhir")
+        _async(_append_zero_targets, job_id, last_stats[0].get("zero_targets", []))
+        _async(cloud.update_job, job_id, {
+            "status": new_status,
+            "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False),
+        })
+        _async(_update_chunk_json, job_id, chunk_idx, chunk_label, new_status, streamed[0], last_stats[0])
+        _async(cloud.append_log, job_id, user, f"chunk {chunk_pos} dihentikan ({stop.mode}) pada target terakhir")
+        writer.drain()
+        writer.stop()
         print("CHUNK_STOP " + json.dumps(checkpoint, ensure_ascii=False), flush=True)
         return
     except Exception as exc:  # noqa: BLE001
         flush_remaining()
-        _append_zero_targets(job_id, last_stats[0].get("zero_targets", []))
-        _safe_update(job_id, {"status": "failed", "error": str(exc)})
-        _update_chunk_json(job_id, chunk_idx, chunk_label, "failed", streamed[0], last_stats[0])
-        cloud.append_log(job_id, user, f"chunk {chunk_pos} GAGAL: {exc}")
+        _async(_append_zero_targets, job_id, last_stats[0].get("zero_targets", []))
+        _async(cloud.update_job, job_id, {"status": "failed", "error": str(exc)})
+        _async(_update_chunk_json, job_id, chunk_idx, chunk_label, "failed", streamed[0], last_stats[0])
+        _async(cloud.append_log, job_id, user, f"chunk {chunk_pos} GAGAL: {exc}")
+        writer.drain()
+        writer.stop()
         print(f"ERROR {exc}", flush=True)
         raise
 
-    # Flush sisa baris yang belum terkirim.
     flush_remaining()
-
-    _append_zero_targets(job_id, last_stats[0].get("zero_targets", []))
-    _update_chunk_json(job_id, chunk_idx, chunk_label, "done", streamed[0], last_stats[0])
-    cloud.append_log(
-        job_id, user,
+    _async(_append_zero_targets, job_id, last_stats[0].get("zero_targets", []))
+    _async(_update_chunk_json, job_id, chunk_idx, chunk_label, "done", streamed[0], last_stats[0])
+    _async(
+        cloud.append_log, job_id, user,
         f"chunk {chunk_pos} selesai: {manifest.get('records', 0)} records, {manifest.get('targets', 0)} target",
     )
+    writer.drain()
+    writer.stop()
     print("CHUNK_DONE " + json.dumps(manifest, ensure_ascii=False), flush=True)
 
 

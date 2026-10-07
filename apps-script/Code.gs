@@ -16,7 +16,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-08.4";
+var APP_VERSION = "2026-10-08.5";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -53,9 +53,22 @@ function readTable_(name, headers) {
   var head = values.shift().map(function (h) { return String(h).trim(); });
   return values.filter(function (r) { return String(r[0]).length > 0; }).map(function (r) {
     var o = {};
-    head.forEach(function (h, i) { o[h] = r[i]; });
+    head.forEach(function (h, i) {
+      var v = (i < r.length) ? r[i] : "";
+      o[h] = (v === null || v === undefined) ? "" : v;
+    });
     return o;
   });
+}
+
+function sanitizeJob_(job) {
+  var out = {};
+  Object.keys(job).forEach(function (k) {
+    var v = job[k];
+    if (v instanceof Date) out[k] = fmtVal_(v);
+    else out[k] = (v === null || v === undefined) ? "" : v;
+  });
+  return out;
 }
 
 function nowStr_() {
@@ -223,7 +236,7 @@ function makeResultTab_(brand, jobId) {
 function getJob_(jobId) {
   var jobs = readTable_("Jobs", JOB_HEADERS);
   for (var i = 0; i < jobs.length; i++) {
-    if (String(jobs[i].job_id) === String(jobId)) return jobs[i];
+    if (String(jobs[i].job_id) === String(jobId)) return sanitizeJob_(jobs[i]);
   }
   return null;
 }

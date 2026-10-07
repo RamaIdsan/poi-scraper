@@ -1509,7 +1509,8 @@ def main(
 
                         data.append([
                             category, admin, name, scraped["local_name"], mapped_category,
-                            address, scraped["building"], scraped["phone"], scraped["hours"],
+                            address, scraped["building"], scraped["phone"],
+                            json.dumps(scraped["hours"], ensure_ascii=False),
                             scraped["latitude"], scraped["longitude"], scraped["status"],
                             scraped["website"], scraped["payment"],
                             scraped.get("place_id", ""), row_country, level, admin,

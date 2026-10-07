@@ -323,6 +323,8 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
    - `plan_chunks.py` menghitung target & memecah per provinsi bila besar.
    - Untuk tiap chunk: `run_job.py` menjalankan scraper, **streaming** baris ke tab
      hasil, menulis `progress/current_target/listings_found/records/eta/run_url` dan `Logs`.
+     Semua penulisan Sheets dilakukan lewat **thread latar (non-blocking)** agar proses
+     scraping tidak menunggu jaringan (hemat ±2–7% waktu).
    - `merge_parts.py` menggabungkan semua chunk, dedup, menulis ulang tab, upload CSV Drive,
      set `status=done`.
 4. Dashboard memantau lewat kolom-kolom tersebut.
@@ -343,6 +345,8 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 | **Job `failed`** | Lihat tombol **log** (GitHub Actions) dan tab `Logs`. |
 | **Hasil kosong / sedikit** | Perkecil level target, pakai **Pecah ke unit terkecil**, atau naikkan **Tile density**. Google juga bisa memblokir IP GitHub. |
 | **Tab hasil tidak terisi** | Pastikan service account masih **Editor** di spreadsheet; cek tab `Logs`. Catatan: fitur streaming/kolom detail hanya jalan jika **repo GitHub sudah di-push** (worker terbaru). |
+| **`WARN streaming gagal: ... struct_value`** | Nilai non-skalar (mis. jam operasional) terkirim ke Sheets. Sudah diperbaiki: jam disimpan sebagai JSON string + sanitasi sel di worker. Push & redeploy worker terbaru. |
+| **`Gagal memuat detail: jobs.get gagal: null`** | Baris lama lebih pendek dari header → nilai `undefined` tidak bisa diserialisasi. Sudah diperbaiki (`readTable_` mengisi sel kosong + `getJob_` disanitasi). Redeploy Apps Script. |
 | **`output_url` kosong / CSV tidak ada** | Penyebab umum: **service account tidak punya kuota Drive pribadi**. Solusi: CSV diekspor oleh **Apps Script** (akun Anda). Set `DRIVE_FOLDER_ID` (Script Property / `setDriveFolder(id)`) dan pastikan trigger `exportCompleted` aktif (`setupTriggers()`), atau jalankan `exportCompleted()` manual. Tombol **csv** di dashboard juga bisa mengunduh langsung dari tab hasil (export URL) sebelum file Drive siap. |
 | **Progress format lama `x% (n records) \| a/b`** | Worker di GitHub masih versi lama → `git push origin main` lalu jalankan job baru. |
 | **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |

@@ -1104,7 +1104,8 @@ function openDetail(jobId){
   api("jobs.get", { job_id: jobId }).then(function(raw){
     renderDetail(Object.assign({}, job, raw || {}));
   }).catch(function(err){
-    $("detailBody").innerHTML = '<div class="text-rose-500 p-4">Gagal memuat detail: ' + esc(err.message) + '</div>';
+    toast("Detail lengkap gagal dimuat, memakai data daftar: " + err.message, "info");
+    renderDetail(job);
   });
 }
 

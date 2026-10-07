@@ -1,8 +1,22 @@
 """Helper Google Sheets & Drive memakai service account (untuk GitHub Actions)."""
 import json
 import os
+import threading
 import time
 from pathlib import Path
+
+_LOCK = threading.RLock()
+
+
+def _cell(value):
+    """Ubah nilai sel menjadi tipe yang diterima Sheets API."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -186,7 +200,7 @@ def append_rows(tab_name, rows, chunk_size=1000):
     sid = _spreadsheet_id()
     total = 0
     for i in range(0, len(rows), chunk_size):
-        block = rows[i:i + chunk_size]
+        block = [[_cell(c) for c in row] for row in rows[i:i + chunk_size]]
         sheets.spreadsheets().values().append(
             spreadsheetId=sid, range=f"{tab_name}!A1",
             valueInputOption="RAW", insertDataOption="INSERT_ROWS",
@@ -201,7 +215,7 @@ def overwrite_tab(tab_name, headers, rows):
     sheets, _ = _services()
     sid = _ensure_sheet(sheets, tab_name, headers)
     sheets.spreadsheets().values().clear(spreadsheetId=sid, range=f"{tab_name}!A1:ZZ").execute()
-    data = [headers] + [list(r) for r in rows]
+    data = [[_cell(c) for c in headers]] + [[_cell(c) for c in r] for r in rows]
     for i in range(0, len(data), 1000):
         block = data[i:i + 1000]
         sheets.spreadsheets().values().append(
@@ -258,3 +272,19 @@ def upload_csv(local_path, name=None, share_email=None):
         except Exception as exc:  # noqa: BLE001
             print(f"WARN gagal share ke {share_email}: {exc}")
     return file["id"], file.get("webViewLink", "")
+
+
+def _locked(fn):
+    """Bungkus fungsi publik dengan RLock agar aman dipakai lintas-thread."""
+    def wrapper(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+    wrapper.__name__ = getattr(fn, "__name__", "wrapped")
+    return wrapper
+
+
+for _name in (
+    "find_job_row", "update_job", "get_job_field", "_ensure_sheet", "fetch_tab_rows",
+    "ensure_tab", "ensure_header", "append_rows", "overwrite_tab", "append_log", "upload_csv",
+):
+    globals()[_name] = _locked(globals()[_name])
