@@ -60,6 +60,21 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .kpi-dot { width: .5rem; height: .5rem; border-radius: 9999px; display: inline-block; }
     .chip { display:inline-flex; align-items:center; gap:.35rem; padding:.15rem .5rem; border-radius:9999px; font-size:.72rem; font-weight:600; }
+    /* Fallback: paksa layout mobile saat bug viewport Apps Script (iframe 980px) */
+    html.force-mobile #kpiRow { grid-template-columns: 1fr !important; }
+    html.force-mobile .lg\:grid-cols-2 { grid-template-columns: 1fr !important; }
+    html.force-mobile .sm\:grid-cols-2 { grid-template-columns: 1fr !important; }
+    html.force-mobile .xl\:grid-cols-4 { grid-template-columns: 1fr !important; }
+    html.force-mobile #whoWrap { display: none !important; }
+    html.force-mobile #whoCompact { display: flex !important; }
+    html.force-mobile #mobileTabsBar { display: block !important; }
+    html.force-mobile #jobsTableWrap { display: none !important; }
+    html.force-mobile #jobsCards { display: block !important; }
+    html.force-mobile #usersWrap { display: none !important; }
+    html.force-mobile #usersCards { display: block !important; }
+    html.force-mobile .ms-list { max-height: 45vh !important; }
+    html.force-mobile .ms-done { display: block !important; }
+    html.force-mobile .modal-panel { width: 100% !important; height: 100% !important; max-height: none !important; border-radius: 0 !important; }
   </style>
 </head>
 
@@ -123,14 +138,11 @@
       </div>
       <div class="flex-1"></div>
       <span id="whoCompact" title="" class="sm:hidden w-8 h-8 rounded-full grad-brand text-white text-xs font-bold flex items-center justify-center shrink-0">?</span>
-      <div class="hidden sm:flex items-center gap-2 mr-1">
+      <div id="whoWrap" class="hidden sm:flex items-center gap-2 mr-1">
         <span id="who" class="text-xs font-semibold px-3 py-1.5 rounded-full glass-soft truncate max-w-[240px]">-</span>
         <span id="quotaBadge" class="chip bg-cyan-500/15 text-cyan-600 dark:text-cyan-300">kuota</span>
         <span id="ver" class="text-[11px] text-slate-400"></span>
       </div>
-      <button id="btnBell" aria-label="Notifikasi job selesai" class="btn p-2.5 sm:p-2 rounded-xl glass-soft" title="Notifikasi job selesai" onclick="toggleNotify()">
-        <i data-lucide="bell-off" class="w-4 h-4"></i>
-      </button>
       <button id="btnTheme" aria-label="Ganti tema" class="btn p-2.5 sm:p-2 rounded-xl glass-soft" title="Ganti tema" onclick="toggleTheme()">
         <i data-lucide="moon" class="w-4 h-4"></i>
       </button>
@@ -146,7 +158,7 @@
     </div>
   </header>
 
-  <div class="md:hidden max-w-7xl mx-auto px-4 pt-3">
+  <div id="mobileTabsBar" class="md:hidden max-w-7xl mx-auto px-4 pt-3">
     <div id="mobileTabs" class="inline-flex p-1 rounded-xl glass-soft gap-1 w-full"></div>
   </div>
 
@@ -312,7 +324,7 @@
         <span id="jobCount">0 job</span>
         <span>auto-refresh 10 dtk · berikutnya <span id="countdown">10</span> dtk</span>
       </div>
-      <div class="hidden md:block overflow-x-auto scroll-thin">
+      <div id="jobsTableWrap" class="hidden md:block overflow-x-auto scroll-thin">
         <table class="w-full text-sm" id="jobsTable">
           <thead>
             <tr class="text-left text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
@@ -358,7 +370,7 @@
         </div>
       </div>
       <div id="adminMsg" class="msg hidden text-sm rounded-lg p-2.5 mt-3"></div>
-      <div class="hidden md:block mt-4 overflow-x-auto scroll-thin">
+      <div id="usersWrap" class="hidden md:block mt-4 overflow-x-auto scroll-thin">
         <table class="w-full text-sm">
           <thead>
             <tr class="text-left text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
@@ -376,7 +388,7 @@
 <!-- ================= MODALS ================= -->
 <div id="modalPreview" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Preview Data">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalPreview')"></div>
-  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-5xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+  <div class="modal-panel relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-5xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
     <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="table-2" class="w-4 h-4"></i> Preview Data <span id="previewTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
       <button aria-label="Tutup" class="btn p-2 glass-soft" onclick="closeModal('modalPreview')"><i data-lucide="x" class="w-4 h-4"></i></button>
@@ -387,7 +399,7 @@
 
 <div id="modalLogs" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Logs">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalLogs')"></div>
-  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-4xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+  <div class="modal-panel relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-4xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
     <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="scroll-text" class="w-4 h-4"></i> Logs <span id="logsTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
       <div class="flex gap-2">
@@ -401,7 +413,7 @@
 
 <div id="modalDiag" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Diagnostik Sistem">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalDiag')"></div>
-  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-3xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+  <div class="modal-panel relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-3xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
     <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="stethoscope" class="w-4 h-4"></i> Diagnostik Sistem</h3>
       <button aria-label="Tutup" class="btn p-2 glass-soft" onclick="closeModal('modalDiag')"><i data-lucide="x" class="w-4 h-4"></i></button>
@@ -412,7 +424,7 @@
 
 <div id="modalDetail" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Job Detail">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalDetail')"></div>
-  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-4xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+  <div class="modal-panel relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-4xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
     <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4"></i> Job Detail <span id="detailTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
       <div class="flex gap-2">
@@ -438,7 +450,6 @@ var RELEVANCE = "mirip";
 var RADIUS = "auto";
 var PREV_STATUS = {};
 var FIRST_LOAD = true;
-var NOTIFY_ENABLED = localStorage.getItem("poi_notify") === "1";
 var LAST_REFRESH = null;
 var COUNTDOWN = 10;
 var THEME_KEY = "poi_theme";
@@ -492,39 +503,10 @@ function copyText(text, label){
   } catch(e){ toast("Gagal menyalin", "err"); }
 }
 
-function updateBell(){
-  var b = $("btnBell");
-  if (!b) return;
-  b.innerHTML = '<i data-lucide="' + (NOTIFY_ENABLED ? "bell-ring" : "bell-off") + '" class="w-4 h-4"></i>';
-  icons();
-}
-function toggleNotify(){
-  if (!("Notification" in window)){ toast("Browser tidak mendukung notifikasi", "err"); return; }
-  if (NOTIFY_ENABLED){
-    NOTIFY_ENABLED = false;
-    localStorage.setItem("poi_notify", "0");
-    toast("Notifikasi dimatikan", "info");
-    updateBell();
-    return;
-  }
-  Notification.requestPermission().then(function(p){
-    if (p === "granted"){
-      NOTIFY_ENABLED = true;
-      localStorage.setItem("poi_notify", "1");
-      toast("Notifikasi dinyalakan", "ok");
-    } else {
-      toast("Izin notifikasi ditolak browser", "err");
-    }
-    updateBell();
-  });
-}
 function notifyJob(title, body, type){
+  // Notifikasi browser tidak tersedia di sandbox Apps Script (iframe tanpa
+  // izin 'notifications'), jadi cukup toast dalam aplikasi.
   toast(title + (body ? " — " + body : ""), type || "ok");
-  try {
-    if (NOTIFY_ENABLED && "Notification" in window && Notification.permission === "granted"){
-      new Notification(title, { body: body || "" });
-    }
-  } catch(e){}
 }
 function detectTransitions(list){
   if (FIRST_LOAD){
@@ -688,7 +670,7 @@ function tryLogin(){
     loadCountry();
     renderMobileTabs();
     renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
-    renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell(); brandHintCheck();
+    renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); brandHintCheck();
     renderSkeleton();
     refreshAll(true);
     startPolling();
@@ -1712,7 +1694,24 @@ function adminToggleActive(email, active){
 /* ============================================================
    MOBILE TABS / SKELETON / FORM STATE
    ============================================================ */
-function isDesktop(){ return window.matchMedia("(min-width: 768px)").matches; }
+function isDesktop(){
+  if (document.documentElement.classList.contains("force-mobile")) return false;
+  return window.matchMedia("(min-width: 768px)").matches;
+}
+
+function applyForcedMobile(){
+  var el = document.documentElement;
+  var screenW = (window.screen && window.screen.width) ? window.screen.width : 9999;
+  var bug = screenW < 768 && window.innerWidth > 700;
+  el.classList.toggle("force-mobile", bug);
+  if (bug){
+    var factor = Math.min(3, Math.max(1, window.innerWidth / Math.max(320, screenW)));
+    el.style.zoom = factor.toFixed(2);
+  } else {
+    el.style.zoom = "";
+  }
+  applyMobileTab();
+}
 
 function renderMobileTabs(){
   var host = $("mobileTabs");
@@ -1838,8 +1837,9 @@ window.addEventListener("load", function(){
     });
   } catch(e){}
   renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
-  renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell(); brandHintCheck();
-  renderMobileTabs(); wireFormState();
+  renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); brandHintCheck();
+  renderMobileTabs(); wireFormState(); applyForcedMobile();
+  window.addEventListener("resize", applyForcedMobile);
   icons();
   initConfig();
 });

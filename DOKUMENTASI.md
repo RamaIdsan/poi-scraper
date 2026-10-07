@@ -43,7 +43,7 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ## 3. Panduan Dashboard (membuat job)
 
-> **Tampilan baru (v2026-10-09.1)**: UI modern dengan Tailwind + Lucide, tema
+> **Tampilan baru (v2026-10-09.2)**: UI modern dengan Tailwind + Lucide, tema
 > gelap/terang (ikut sistem + toggle), 4 kartu KPI, level target berupa kartu pilihan,
 > multi-pilih wilayah berbentuk chip, modal **Preview**, **Logs**, dan **Job Detail**.
 > Konfigurasi Lanjutan kini punya **Preset cakupan** (Cepat/Seimbang/Maksimal),
@@ -201,8 +201,15 @@ records/listings, ETA, **statistik filter gabungan semua chunk**
 phone/website/hours/payment/building dst.), dan tombol
 **Ulangi hanya target 0 hasil** (membuat job baru khusus target yang kosong).
 
-**Notifikasi**: tombol lonceng di topbar mengaktifkan notifikasi browser; toast
-otomatis muncul saat job berubah ke `done`/`failed`/`paused`/`cancelled`.
+**Notifikasi**: cukup **toast dalam aplikasi** saat job berubah ke
+`done`/`failed`/`paused`/`cancelled`. Notifikasi browser (Notification API)
+**tidak tersedia** di dalam sandbox Apps Script (iframe tanpa izin
+`notifications`), sehingga tombol lonceng dihapus.
+
+**Viewport HP**: `doGet` memakai `.addMetaTag("viewport", ...)`. Jika bug Google
+"iframe terkunci 980px" muncul, aplikasi otomatis menambahkan class
+`force-mobile` (deteksi `screen.width < 768` + `innerWidth > 700`) untuk memaksa
+layout satu kolom + kartu + modal full-screen, plus `zoom` agar teks terbaca.
 
 **Tampilan HP (v2026-10-09.1)**:
 - **Tab bagian** di layar kecil: *Buat Job / Job Saya / Admin* (desktop tetap semua tampil).

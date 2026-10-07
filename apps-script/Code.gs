@@ -16,7 +16,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-09.1";
+var APP_VERSION = "2026-10-09.2";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -631,8 +631,9 @@ function adminListUsers_() {
 // ------------------------------------------------------------
 function doGet() {
   return HtmlService.createHtmlOutputFromFile("Index")
-    .setTitle("POI Scraper Dashboard")
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setTitle("POI Scraper Studio")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag("viewport", "width=device-width, initial-scale=1, maximum-scale=5");
 }
 
 function doPost(e) {
