@@ -43,7 +43,7 @@ Lihat `README.md` bagian **Deploy**. Ringkasnya:
 
 ## 3. Panduan Dashboard (membuat job)
 
-> **Tampilan baru (v2026-10-08.6)**: UI modern dengan Tailwind + Lucide, tema
+> **Tampilan baru (v2026-10-09.1)**: UI modern dengan Tailwind + Lucide, tema
 > gelap/terang (ikut sistem + toggle), 4 kartu KPI, level target berupa kartu pilihan,
 > multi-pilih wilayah berbentuk chip, modal **Preview**, **Logs**, dan **Job Detail**.
 > Konfigurasi Lanjutan kini punya **Preset cakupan** (Cepat/Seimbang/Maksimal),
@@ -203,6 +203,16 @@ phone/website/hours/payment/building dst.), dan tombol
 
 **Notifikasi**: tombol lonceng di topbar mengaktifkan notifikasi browser; toast
 otomatis muncul saat job berubah ke `done`/`failed`/`paused`/`cancelled`.
+
+**Tampilan HP (v2026-10-09.1)**:
+- **Tab bagian** di layar kecil: *Buat Job / Job Saya / Admin* (desktop tetap semua tampil).
+- **Modal full-screen** di HP (Preview/Logs/Detail/Diagnostik); desktop tetap kartu terpusat.
+- **Chip user ringkas** (inisial + status admin) tampil di HP.
+- **State form tersimpan** di browser: negara, brand, level, wilayah, mode, tile, radius,
+  mode pencarian, dan opsi tanpa-koordinat dipulihkan saat dibuka lagi.
+- **Skeleton loader** saat memuat; filter status menampilkan jumlah; toast maksimal 3 + tombol tutup.
+- **Aksesibilitas**: modal `role="dialog"`, focus trap, tombol ikon ber-`aria-label`.
+- **Tema** mengikuti perubahan sistem saat mode "system".
 
 > Dedup hasil memakai **Place_ID** lebih dulu (antar-chunk), lalu fallback
 > brand/nama/alamat/koordinat. Pemanggilan Sheets API di worker di-cache agar

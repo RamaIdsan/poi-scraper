@@ -51,7 +51,8 @@
     .ripple-dot { position: absolute; border-radius: 9999px; background: rgba(255,255,255,.6); transform: scale(0); pointer-events: none; }
     .ms { position: relative; }
     .ms-panel { max-height: 320px; }
-    .ms-list { max-height: 220px; overflow: auto; }
+    .ms-list { max-height: 45vh; overflow: auto; }
+    @media (min-width: 640px) { .ms-list { max-height: 220px; } }
     .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
     .scroll-thin::-webkit-scrollbar-thumb { background: rgba(100,116,139,.5); border-radius: 9999px; }
     .terminal { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -121,21 +122,22 @@
         </div>
       </div>
       <div class="flex-1"></div>
+      <span id="whoCompact" title="" class="sm:hidden w-8 h-8 rounded-full grad-brand text-white text-xs font-bold flex items-center justify-center shrink-0">?</span>
       <div class="hidden sm:flex items-center gap-2 mr-1">
         <span id="who" class="text-xs font-semibold px-3 py-1.5 rounded-full glass-soft truncate max-w-[240px]">-</span>
         <span id="quotaBadge" class="chip bg-cyan-500/15 text-cyan-600 dark:text-cyan-300">kuota</span>
         <span id="ver" class="text-[11px] text-slate-400"></span>
       </div>
-      <button id="btnBell" class="btn p-2 rounded-xl glass-soft" title="Notifikasi job selesai" onclick="toggleNotify()">
+      <button id="btnBell" aria-label="Notifikasi job selesai" class="btn p-2.5 sm:p-2 rounded-xl glass-soft" title="Notifikasi job selesai" onclick="toggleNotify()">
         <i data-lucide="bell-off" class="w-4 h-4"></i>
       </button>
-      <button id="btnTheme" class="btn p-2 rounded-xl glass-soft" title="Ganti tema" onclick="toggleTheme()">
+      <button id="btnTheme" aria-label="Ganti tema" class="btn p-2.5 sm:p-2 rounded-xl glass-soft" title="Ganti tema" onclick="toggleTheme()">
         <i data-lucide="moon" class="w-4 h-4"></i>
       </button>
-      <button id="btnRefresh" class="btn p-2 rounded-xl glass-soft" title="Segarkan data" onclick="refreshAll(false)">
+      <button id="btnRefresh" aria-label="Segarkan data" class="btn p-2.5 sm:p-2 rounded-xl glass-soft" title="Segarkan data" onclick="refreshAll(false)">
         <i id="btnRefreshIcon" data-lucide="refresh-cw" class="w-4 h-4"></i>
       </button>
-      <button class="btn p-2 rounded-xl glass-soft text-rose-500" title="Keluar / ganti API key" onclick="logout()">
+      <button aria-label="Keluar / ganti API key" class="btn p-2.5 sm:p-2 rounded-xl glass-soft text-rose-500" title="Keluar / ganti API key" onclick="logout()">
         <i data-lucide="log-out" class="w-4 h-4"></i>
       </button>
     </div>
@@ -144,13 +146,17 @@
     </div>
   </header>
 
-  <main class="max-w-7xl mx-auto px-4 py-5 space-y-5">
+  <div class="md:hidden max-w-7xl mx-auto px-4 pt-3">
+    <div id="mobileTabs" class="inline-flex p-1 rounded-xl glass-soft gap-1 w-full"></div>
+  </div>
+
+  <main class="max-w-7xl mx-auto px-4 py-5 space-y-5 pb-[env(safe-area-inset-bottom)]">
 
     <!-- KPI -->
     <section id="kpiRow" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"></section>
 
     <!-- BUILDER -->
-    <section class="glass rounded-2xl shadow-xl p-5">
+    <section id="secBuilder" class="glass rounded-2xl shadow-xl p-5">
       <div class="flex items-center gap-2 mb-4">
         <i data-lucide="wand-sparkles" class="w-5 h-5 text-cyan-500"></i>
         <h2 class="font-bold">Buat Job Scraping</h2>
@@ -289,7 +295,7 @@
     </section>
 
     <!-- JOBS -->
-    <section class="glass rounded-2xl shadow-xl p-5">
+    <section id="secJobs" class="glass rounded-2xl shadow-xl p-5">
       <div class="flex flex-wrap items-center gap-2 mb-3">
         <i data-lucide="list-checks" class="w-5 h-5 text-indigo-500"></i>
         <h2 class="font-bold mr-2">Job Saya</h2>
@@ -352,7 +358,7 @@
         </div>
       </div>
       <div id="adminMsg" class="msg hidden text-sm rounded-lg p-2.5 mt-3"></div>
-      <div class="mt-4 overflow-x-auto scroll-thin">
+      <div class="hidden md:block mt-4 overflow-x-auto scroll-thin">
         <table class="w-full text-sm">
           <thead>
             <tr class="text-left text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
@@ -362,58 +368,59 @@
           <tbody id="users"></tbody>
         </table>
       </div>
+      <div id="usersCards" class="md:hidden space-y-2 mt-3"></div>
     </section>
   </main>
 </div>
 
 <!-- ================= MODALS ================= -->
-<div id="modalPreview" class="hidden fixed inset-0 z-[120]">
+<div id="modalPreview" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Preview Data">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalPreview')"></div>
-  <div class="relative glass rounded-2xl max-w-5xl mx-auto mt-10 mb-10 p-5 shadow-2xl max-h-[80vh] flex flex-col">
-    <div class="flex items-center justify-between mb-3">
+  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-5xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+    <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="table-2" class="w-4 h-4"></i> Preview Data <span id="previewTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
-      <button class="btn p-1.5 glass-soft" onclick="closeModal('modalPreview')"><i data-lucide="x" class="w-4 h-4"></i></button>
+      <button aria-label="Tutup" class="btn p-2 glass-soft" onclick="closeModal('modalPreview')"><i data-lucide="x" class="w-4 h-4"></i></button>
     </div>
-    <div id="previewBody" class="overflow-auto scroll-thin text-xs"></div>
+    <div id="previewBody" class="overflow-auto scroll-thin text-xs flex-1 min-h-0"></div>
   </div>
 </div>
 
-<div id="modalLogs" class="hidden fixed inset-0 z-[120]">
+<div id="modalLogs" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Logs">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalLogs')"></div>
-  <div class="relative glass rounded-2xl max-w-4xl mx-auto mt-10 mb-10 p-5 shadow-2xl max-h-[80vh] flex flex-col">
-    <div class="flex items-center justify-between mb-3">
+  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-4xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+    <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="scroll-text" class="w-4 h-4"></i> Logs <span id="logsTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
       <div class="flex gap-2">
         <a id="logsRunLink" class="btn px-3 py-1.5 glass-soft text-xs hidden" target="_blank" href="#">Buka GitHub</a>
-        <button class="btn p-1.5 glass-soft" onclick="closeModal('modalLogs')"><i data-lucide="x" class="w-4 h-4"></i></button>
+        <button aria-label="Tutup" class="btn p-2 glass-soft" onclick="closeModal('modalLogs')"><i data-lucide="x" class="w-4 h-4"></i></button>
       </div>
     </div>
-    <pre id="logsBody" class="terminal text-[12px] leading-relaxed bg-slate-950 text-emerald-300 rounded-xl p-4 overflow-auto scroll-thin flex-1"></pre>
+    <pre id="logsBody" class="terminal text-[12px] leading-relaxed bg-slate-950 text-emerald-300 rounded-xl p-4 overflow-auto scroll-thin flex-1 min-h-0"></pre>
   </div>
 </div>
 
-<div id="modalDiag" class="hidden fixed inset-0 z-[120]">
+<div id="modalDiag" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Diagnostik Sistem">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalDiag')"></div>
-  <div class="relative glass rounded-2xl max-w-3xl mx-auto mt-10 mb-10 p-5 shadow-2xl max-h-[80vh] flex flex-col">
-    <div class="flex items-center justify-between mb-3">
+  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-3xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+    <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="stethoscope" class="w-4 h-4"></i> Diagnostik Sistem</h3>
-      <button class="btn p-1.5 glass-soft" onclick="closeModal('modalDiag')"><i data-lucide="x" class="w-4 h-4"></i></button>
+      <button aria-label="Tutup" class="btn p-2 glass-soft" onclick="closeModal('modalDiag')"><i data-lucide="x" class="w-4 h-4"></i></button>
     </div>
-    <pre id="diagBody" class="terminal text-[12px] bg-slate-950 text-cyan-200 rounded-xl p-4 overflow-auto scroll-thin flex-1"></pre>
+    <pre id="diagBody" class="terminal text-[12px] bg-slate-950 text-cyan-200 rounded-xl p-4 overflow-auto scroll-thin flex-1 min-h-0"></pre>
   </div>
 </div>
 
-<div id="modalDetail" class="hidden fixed inset-0 z-[120]">
+<div id="modalDetail" class="hidden fixed inset-0 z-[120] p-0 sm:p-4 flex items-start sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Job Detail">
   <div class="absolute inset-0 bg-black/60" onclick="closeModal('modalDetail')"></div>
-  <div class="relative glass rounded-2xl max-w-4xl mx-auto mt-10 mb-10 p-5 shadow-2xl max-h-[85vh] flex flex-col">
-    <div class="flex items-center justify-between mb-3">
+  <div class="relative glass rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-4xl sm:max-h-[85vh] p-4 sm:p-5 shadow-2xl flex flex-col">
+    <div class="flex items-center justify-between mb-3 shrink-0">
       <h3 class="font-bold flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4"></i> Job Detail <span id="detailTitle" class="text-xs text-slate-500 dark:text-slate-400"></span></h3>
       <div class="flex gap-2">
         <a id="detailRunLink" class="btn px-3 py-1.5 glass-soft text-xs hidden" target="_blank" href="#">Buka GitHub</a>
-        <button class="btn p-1.5 glass-soft" onclick="closeModal('modalDetail')"><i data-lucide="x" class="w-4 h-4"></i></button>
+        <button aria-label="Tutup" class="btn p-2 glass-soft" onclick="closeModal('modalDetail')"><i data-lucide="x" class="w-4 h-4"></i></button>
       </div>
     </div>
-    <div id="detailBody" class="overflow-auto scroll-thin text-sm"></div>
+    <div id="detailBody" class="overflow-auto scroll-thin text-sm flex-1 min-h-0"></div>
   </div>
 </div>
 
@@ -435,6 +442,9 @@ var NOTIFY_ENABLED = localStorage.getItem("poi_notify") === "1";
 var LAST_REFRESH = null;
 var COUNTDOWN = 10;
 var THEME_KEY = "poi_theme";
+var PENDING_RESTORE = null;
+var MOBILE_TAB = "builder";
+var FORM_KEY = "poi_form_v1";
 
 /* ============================================================
    UTILS
@@ -457,12 +467,23 @@ function toast(message, type){
     info: "border-cyan-500/40 bg-cyan-500/15 text-cyan-700 dark:text-cyan-300"
   };
   var iconName = type === "ok" ? "check-circle-2" : (type === "err" ? "alert-triangle" : "info");
+  var host = $("toasts");
+  while (host.children.length >= 3){ host.removeChild(host.firstChild); }
   var el = document.createElement("div");
   el.className = "glass rounded-xl shadow-xl p-3 flex items-start gap-2 border " + (palette[type] || palette.info);
-  el.innerHTML = '<i data-lucide="' + iconName + '" class="w-4 h-4 mt-0.5 shrink-0"></i><div class="text-sm flex-1">' + esc(message) + '</div>';
-  $("toasts").appendChild(el);
+  el.innerHTML = '<i data-lucide="' + iconName + '" class="w-4 h-4 mt-0.5 shrink-0"></i>' +
+    '<div class="text-sm flex-1">' + esc(message) + '</div>' +
+    '<button aria-label="Tutup" class="opacity-60 hover:opacity-100 shrink-0"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>';
+  var timer = setTimeout(dismiss, 4200);
+  function dismiss(){
+    clearTimeout(timer);
+    el.style.transition = "opacity .3s";
+    el.style.opacity = "0";
+    setTimeout(function(){ el.remove(); }, 320);
+  }
+  el.querySelector("button").addEventListener("click", dismiss);
+  host.appendChild(el);
   icons();
-  setTimeout(function(){ el.style.transition = "opacity .3s"; el.style.opacity = "0"; setTimeout(function(){ el.remove(); }, 320); }, 4200);
 }
 
 function copyText(text, label){
@@ -525,10 +546,33 @@ function detectTransitions(list){
   });
 }
 
-function openModal(id){ $(id).classList.remove("hidden"); icons(); }
-function closeModal(id){ $(id).classList.add("hidden"); }
+var MODAL_IDS = ["modalPreview", "modalLogs", "modalDiag", "modalDetail"];
+function openModal(id){
+  var m = $(id);
+  if (!m) return;
+  m.__prevFocus = document.activeElement;
+  m.classList.remove("hidden");
+  icons();
+  var focusable = m.querySelector("button, a[href], input, [tabindex]");
+  if (focusable){ try { focusable.focus(); } catch(e){} }
+}
+function closeModal(id){
+  var m = $(id);
+  if (!m) return;
+  m.classList.add("hidden");
+  if (m.__prevFocus && m.__prevFocus.focus){ try { m.__prevFocus.focus(); } catch(e){} }
+}
 document.addEventListener("keydown", function(e){
-  if (e.key === "Escape"){ ["modalPreview","modalLogs","modalDiag","modalDetail"].forEach(closeModal); }
+  if (e.key === "Escape"){ MODAL_IDS.forEach(closeModal); return; }
+  if (e.key === "Tab"){
+    var open = MODAL_IDS.map($).filter(function(m){ return m && !m.classList.contains("hidden"); })[0];
+    if (!open) return;
+    var f = open.querySelectorAll("button, a[href], input, [tabindex]:not([tabindex='-1'])");
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  }
 });
 
 function humanizeDuration(sec){
@@ -629,12 +673,23 @@ function tryLogin(){
     ME = me;
     $("who").textContent = me.email;
     $("quotaBadge").textContent = me.is_admin ? "admin" : (me.quota > 0 ? "kuota " + me.used + "/" + me.quota : "unlimited");
+    var compact = $("whoCompact");
+    if (compact){
+      compact.textContent = String(me.email || "?").charAt(0).toUpperCase();
+      compact.title = me.email + (me.is_admin ? " (admin)" : "");
+      compact.className = "sm:hidden w-8 h-8 rounded-full grad-brand text-white text-xs font-bold flex items-center justify-center shrink-0" +
+        (me.is_admin ? " ring-2 ring-emerald-400" : "");
+    }
     $("loginCard").classList.add("hidden");
     $("app").classList.remove("hidden");
     if (me.is_admin){ $("adminBox").classList.remove("hidden"); loadUsers(); }
+    PENDING_RESTORE = loadFormState();
+    if (PENDING_RESTORE && PENDING_RESTORE.country){ $("country").value = PENDING_RESTORE.country; renderCountryTabs(); }
     loadCountry();
+    renderMobileTabs();
     renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
     renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell(); brandHintCheck();
+    renderSkeleton();
     refreshAll(true);
     startPolling();
     icons();
@@ -653,6 +708,8 @@ function logout(){
   $("app").classList.add("hidden");
   $("loginCard").classList.remove("hidden");
   $("apiKey").value = "";
+  var compact = $("whoCompact");
+  if (compact){ compact.textContent = "?"; compact.title = ""; }
   toast("Berhasil keluar. Masukkan API key untuk masuk kembali.", "info");
 }
 
@@ -688,6 +745,7 @@ function makeMulti(containerId, onChange){
         '<button type="button" class="ms-clear btn flex-1 text-[11px] px-2 py-1 glass-soft">Bersihkan</button>' +
       '</div>' +
       '<div class="ms-list scroll-thin"></div>' +
+      '<button type="button" class="ms-done btn w-full mt-2 py-2 glass-soft sm:hidden">Selesai</button>' +
     '</div>';
   var panel = el.querySelector(".ms-panel");
   var labelEl = el.querySelector(".ms-label");
@@ -721,6 +779,8 @@ function makeMulti(containerId, onChange){
   searchEl.addEventListener("input", function(){ state.query = searchEl.value.toLowerCase(); render(); });
   el.querySelector(".ms-all").addEventListener("click", function(){ state.selected = state.options.slice(); setLabel(); render(); fire(); });
   el.querySelector(".ms-clear").addEventListener("click", function(){ state.selected = []; setLabel(); render(); fire(); });
+  var doneBtn = el.querySelector(".ms-done");
+  if (doneBtn) doneBtn.addEventListener("click", function(){ togglePanel(false); });
   listEl.addEventListener("change", function(e){
     if (!e.target || e.target.type !== "checkbox") return;
     var v = e.target.value;
@@ -813,6 +873,7 @@ function loadCountry(){
       else if (idx.levels.indexOf("kota") >= 0) lv.value = "kota";
       renderLevelCards();
       fillProvinces();
+      if (PENDING_RESTORE){ applyFormState(PENDING_RESTORE); PENDING_RESTORE = null; }
       setSyncing(false);
       icons();
     })
@@ -853,9 +914,9 @@ function rebuildKecamatan(){
   MS.kecamatan.setOptions(Object.keys(set).sort());
 }
 
-function onProvChange(){ MS.kota.clear(); MS.kecamatan.clear(); rebuildCities(); rebuildKecamatan(); renderChips(); recalc(); }
-function onKotaChange(){ MS.kecamatan.clear(); rebuildKecamatan(); renderChips(); recalc(); }
-function onKecChange(){ renderChips(); recalc(); }
+function onProvChange(){ MS.kota.clear(); MS.kecamatan.clear(); rebuildCities(); rebuildKecamatan(); renderChips(); recalc(); saveFormState(); }
+function onKotaChange(){ MS.kecamatan.clear(); rebuildKecamatan(); renderChips(); recalc(); saveFormState(); }
+function onKecChange(){ renderChips(); recalc(); saveFormState(); }
 
 function syncLevelUI(){
   if (!INDEX) return;
@@ -966,7 +1027,7 @@ function renderCountryTabs(){
   }).join("");
   icons();
 }
-function setCountry(v){ $("country").value = v; renderCountryTabs(); loadCountry(); }
+function setCountry(v){ $("country").value = v; renderCountryTabs(); saveFormState(); loadCountry(); }
 
 function renderLevelCards(){
   var host = $("levelCards");
@@ -985,7 +1046,7 @@ function renderLevelCards(){
   }).join("");
   icons();
 }
-function setLevel(l){ $("level").value = l; renderLevelCards(); syncLevelUI(); }
+function setLevel(l){ $("level").value = l; renderLevelCards(); syncLevelUI(); saveFormState(); }
 
 function renderModeCards(){
   var host = $("modeCards");
@@ -1003,7 +1064,7 @@ function renderModeCards(){
   }).join("");
   icons();
 }
-function setMode(v){ $("mode").value = v; renderModeCards(); recalc(); }
+function setMode(v){ $("mode").value = v; renderModeCards(); recalc(); saveFormState(); }
 
 function renderTileCards(){
   var host = $("tileCards");
@@ -1017,7 +1078,7 @@ function renderTileCards(){
   }).join("");
   icons();
 }
-function setTile(v){ $("tile").value = v; renderTileCards(); recalc(); }
+function setTile(v){ $("tile").value = v; renderTileCards(); recalc(); saveFormState(); }
 
 var PRESETS = {
   cepat: { mode: "unit", tile: "0", relevance: "mirip", radius: "auto", keep: false },
@@ -1044,6 +1105,7 @@ function applyPreset(name){
   if (!p) return;
   setMode(p.mode); setTile(p.tile); setRelevance(p.relevance); setRadius(p.radius);
   if ($("keepNoCoords")) $("keepNoCoords").checked = p.keep;
+  saveFormState();
   toast("Preset " + name + " diterapkan", "info");
 }
 
@@ -1059,7 +1121,7 @@ function renderRadiusCards(){
   var inp = $("radiusManual");
   if (inp) inp.classList.toggle("hidden", RADIUS !== "manual");
 }
-function setRadius(v){ RADIUS = v; renderRadiusCards(); }
+function setRadius(v){ RADIUS = v; renderRadiusCards(); saveFormState(); }
 
 function renderRelevanceCards(){
   var host = $("relevanceCards");
@@ -1071,7 +1133,7 @@ function renderRelevanceCards(){
       '" onclick="setRelevance(\'' + it.v + '\')">' + it.label + '</button>';
   }).join("");
 }
-function setRelevance(v){ RELEVANCE = v; renderRelevanceCards(); }
+function setRelevance(v){ RELEVANCE = v; renderRelevanceCards(); saveFormState(); }
 
 function jobPause(jobId){
   api("jobs.pause", { job_id: jobId }).then(function(){
@@ -1250,7 +1312,7 @@ function renderBrandChips(){
   }).join("");
   icons();
 }
-function setBrand(b){ $("brand").value = b; brandHintCheck(); }
+function setBrand(b){ $("brand").value = b; brandHintCheck(); saveFormState(); }
 
 var GENERIC_WORDS = [
   "market", "station", "mall", "university", "airport", "bus", "terminal",
@@ -1275,12 +1337,18 @@ function brandHintCheck(){
 function renderStatusFilter(){
   var host = $("statusFilter");
   if (!host) return;
+  var counts = { all: JOBS.length, queued: 0, running: 0, done: 0, failed: 0 };
+  (JOBS || []).forEach(function(j){
+    var s = String(j.status || "").toLowerCase();
+    if (s === "running" || s === "dispatched") counts.running++;
+    else if (counts[s] !== undefined) counts[s]++;
+  });
   var items = ["all", "queued", "running", "done", "failed"];
   host.innerHTML = items.map(function(s){
     var active = FILTER.status === s;
     var label = s === "all" ? "Semua" : s;
     return '<button class="btn px-2.5 py-1 text-[11px] rounded-lg ' + (active ? "grad-brand text-white" : "text-slate-600 dark:text-slate-300") +
-      '" onclick="setStatusFilter(\'' + s + '\')">' + label + '</button>';
+      '" onclick="setStatusFilter(\'' + s + '\')">' + label + ' (' + (counts[s] || 0) + ')</button>';
   }).join("");
 }
 function setStatusFilter(s){ FILTER.status = s; renderStatusFilter(); renderJobs(); }
@@ -1451,6 +1519,7 @@ function refreshAll(silent){
     .then(function(out){
       JOBS = out[0] || [];
       renderJobs();
+      renderStatusFilter();
       renderKPI(out[1]);
       detectTransitions(JOBS);
       LAST_REFRESH = new Date();
@@ -1497,6 +1566,7 @@ function submitJob(ev){
   api("jobs.create", payload).then(function(j){
     showMsg($("jobMsg"), "Job dibuat: " + j.job_id + " (" + j.status + ")", true);
     toast("Job " + j.brand + " berhasil dibuat", "ok");
+    if (!isDesktop()) setMobileTab("jobs");
     refreshAll(true);
   }).catch(function(err){ showMsg($("jobMsg"), "Gagal: " + err.message, false); toast("Gagal membuat job", "err"); });
 }
@@ -1584,6 +1654,25 @@ function loadUsers(){
         '<td class="py-2 pr-3">' + (active ? '<span class="text-emerald-500">aktif</span>' : '<span class="text-rose-500">nonaktif</span>') + '</td>' +
         '<td class="py-2">' + actions + '</td></tr>';
     }).join("");
+    var cards = $("usersCards");
+    if (cards){
+      cards.innerHTML = users.map(function(u){
+        var active = String(u.active).toUpperCase() === "TRUE";
+        var emailArg = "'" + esc(u.email) + "'";
+        return '<div class="glass-soft rounded-xl p-3 space-y-2">' +
+          '<div class="flex items-center justify-between gap-2">' +
+          '<div class="font-semibold text-sm break-all">' + esc(u.email) + (u.has_key ? '' : ' <span class="text-[10px] text-amber-500">(reset)</span>') + '</div>' +
+          (active ? '<span class="chip bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">aktif</span>' : '<span class="chip bg-rose-500/15 text-rose-600 dark:text-rose-300">nonaktif</span>') +
+          '</div>' +
+          '<div class="text-[11px] text-slate-500 dark:text-slate-400">Kuota ' + esc(u.quota || 0) + ' · Used ' + esc(u.used || 0) + '</div>' +
+          '<div class="flex flex-wrap gap-1">' +
+          '<button class="btn px-2.5 py-1 text-[11px] glass-soft" onclick="adminGetKey(' + emailArg + ')">Copy key</button>' +
+          '<button class="btn px-2.5 py-1 text-[11px] glass-soft" onclick="adminSetQuota(' + emailArg + ')">Kuota</button>' +
+          '<button class="btn px-2.5 py-1 text-[11px] glass-soft" onclick="adminResetKey(' + emailArg + ',' + Number(u.quota || 0) + ')">Reset</button>' +
+          '<button class="btn px-2.5 py-1 text-[11px] glass-soft" onclick="adminToggleActive(' + emailArg + ',' + (active ? "false" : "true") + ')">' + (active ? "Nonaktifkan" : "Aktifkan") + '</button>' +
+          '</div></div>';
+      }).join("");
+    }
   }).catch(function(){});
 }
 
@@ -1621,9 +1710,121 @@ function adminToggleActive(email, active){
 }
 
 /* ============================================================
+   MOBILE TABS / SKELETON / FORM STATE
+   ============================================================ */
+function isDesktop(){ return window.matchMedia("(min-width: 768px)").matches; }
+
+function renderMobileTabs(){
+  var host = $("mobileTabs");
+  if (!host) return;
+  var items = [
+    { v: "builder", label: "Buat Job", icon: "wand-sparkles" },
+    { v: "jobs", label: "Job Saya", icon: "list-checks" }
+  ];
+  if (ME && ME.is_admin) items.push({ v: "admin", label: "Admin", icon: "shield-check" });
+  host.innerHTML = items.map(function(it){
+    var active = MOBILE_TAB === it.v;
+    return '<button class="btn flex-1 py-2 text-xs rounded-lg inline-flex items-center justify-center gap-1 ' +
+      (active ? "grad-brand text-white" : "text-slate-600 dark:text-slate-300") +
+      '" onclick="setMobileTab(\'' + it.v + '\')"><i data-lucide="' + it.icon + '" class="w-3.5 h-3.5"></i>' + it.label + '</button>';
+  }).join("");
+  icons();
+  applyMobileTab();
+}
+function setMobileTab(name){ MOBILE_TAB = name; renderMobileTabs(); }
+function applyMobileTab(){
+  var builder = $("secBuilder"), jobs = $("secJobs"), admin = $("adminBox");
+  if (isDesktop()){
+    if (builder) builder.classList.remove("hidden");
+    if (jobs) jobs.classList.remove("hidden");
+    if (admin) admin.classList.toggle("hidden", !(ME && ME.is_admin));
+    return;
+  }
+  var map = { builder: builder, jobs: jobs, admin: admin };
+  Object.keys(map).forEach(function(k){
+    var el = map[k];
+    if (!el) return;
+    if (k === "admin" && !(ME && ME.is_admin)){ el.classList.add("hidden"); return; }
+    el.classList.toggle("hidden", k !== MOBILE_TAB);
+  });
+}
+window.addEventListener("resize", applyMobileTab);
+
+function renderSkeleton(){
+  var kpi = $("kpiRow");
+  if (kpi && !kpi.children.length){
+    var card = '<div class="glass rounded-2xl shadow-lg p-4 flex items-center gap-3 animate-pulse">' +
+      '<div class="w-11 h-11 rounded-xl bg-slate-300/50 dark:bg-slate-700/60"></div>' +
+      '<div class="flex-1"><div class="h-3 w-24 bg-slate-300/50 dark:bg-slate-700/60 rounded"></div>' +
+      '<div class="h-5 w-16 bg-slate-300/50 dark:bg-slate-700/60 rounded mt-2"></div></div></div>';
+    kpi.innerHTML = card + card + card + card;
+  }
+  var body = $("jobsBody");
+  if (body && !body.children.length){
+    var row = '<tr class="animate-pulse"><td colspan="8" class="py-3"><div class="h-3 w-full bg-slate-300/40 dark:bg-slate-700/50 rounded"></div></td></tr>';
+    body.innerHTML = row + row + row;
+  }
+}
+
+function saveFormState(){
+  try {
+    localStorage.setItem(FORM_KEY, JSON.stringify({
+      country: $("country").value,
+      brand: $("brand").value,
+      level: $("level").value,
+      mode: $("mode").value,
+      tile: $("tile").value,
+      relevance: RELEVANCE,
+      radius: RADIUS,
+      radiusManual: $("radiusManual") ? $("radiusManual").value : "",
+      keep: $("keepNoCoords") ? !!$("keepNoCoords").checked : true,
+      provinsi: MS.provinsi.getSelected(),
+      kota: MS.kota.getSelected(),
+      kecamatan: MS.kecamatan.getSelected()
+    }));
+  } catch(e){}
+}
+function loadFormState(){
+  try { return JSON.parse(localStorage.getItem(FORM_KEY) || "null"); } catch(e){ return null; }
+}
+function applyFormState(s){
+  if (!s || !INDEX) return;
+  try {
+    if (s.level && INDEX.levels.indexOf(s.level) >= 0){ $("level").value = s.level; }
+    if (s.provinsi && s.provinsi.length){ MS.provinsi.setSelected(s.provinsi); }
+    rebuildCities();
+    if (s.kota && s.kota.length){ MS.kota.setSelected(s.kota); }
+    rebuildKecamatan();
+    if (s.kecamatan && s.kecamatan.length){ MS.kecamatan.setSelected(s.kecamatan); }
+    if (s.mode){ $("mode").value = s.mode; }
+    if (s.tile){ $("tile").value = s.tile; }
+    if (s.relevance) RELEVANCE = s.relevance;
+    if (s.radius) RADIUS = s.radius;
+    if ($("radiusManual") && s.radiusManual){ $("radiusManual").value = s.radiusManual; }
+    if ($("keepNoCoords")) $("keepNoCoords").checked = s.keep !== false;
+    if (s.brand) $("brand").value = s.brand;
+    renderLevelCards(); renderModeCards(); renderTileCards(); renderRelevanceCards(); renderRadiusCards();
+    syncLevelUI(); renderChips(); recalc(); brandHintCheck();
+  } catch(e){}
+}
+function wireFormState(){
+  ["country", "level", "mode", "tile", "brand", "radiusManual", "keepNoCoords"].forEach(function(id){
+    var el = $(id);
+    if (!el) return;
+    el.addEventListener("change", saveFormState);
+    el.addEventListener("input", saveFormState);
+  });
+}
+
+/* ============================================================
    INIT
    ============================================================ */
-$("jobSearch") && $("jobSearch").addEventListener("input", function(e){ FILTER.q = e.target.value; renderJobs(); });
+var _searchTimer = null;
+$("jobSearch") && $("jobSearch").addEventListener("input", function(e){
+  var val = e.target.value;
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(function(){ FILTER.q = val; renderJobs(); }, 200);
+});
 $("level") && $("level").addEventListener("change", syncLevelUI);
 $("mode") && $("mode").addEventListener("change", function(){ renderModeCards(); recalc(); });
 $("tile") && $("tile").addEventListener("change", function(){ renderTileCards(); recalc(); });
@@ -1631,8 +1832,14 @@ $("brand") && $("brand").addEventListener("keydown", function(e){ if (e.key === 
 $("brand") && $("brand").addEventListener("input", brandHintCheck);
 window.addEventListener("load", function(){
   applyTheme(localStorage.getItem(THEME_KEY) || "system");
+  try {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function(){
+      if ((localStorage.getItem(THEME_KEY) || "system") === "system") applyTheme("system");
+    });
+  } catch(e){}
   renderModeCards(); renderTileCards(); renderCountryTabs(); renderBrandChips(); renderStatusFilter();
   renderPresetCards(); renderRadiusCards(); renderRelevanceCards(); updateBell(); brandHintCheck();
+  renderMobileTabs(); wireFormState();
   icons();
   initConfig();
 });
