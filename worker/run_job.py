@@ -287,6 +287,14 @@ def main():
         writer.stop()
         print(f"ERROR {exc}", flush=True)
         raise
+    except BaseException as exc:  # noqa: BLE001
+        # Jaring pengaman: jangan biarkan status job nyangkut 'running'.
+        flush_remaining()
+        _async(cloud.update_job, job_id, {"status": "failed", "error": f"Abort tak terduga: {exc}"})
+        _async(cloud.append_log, job_id, user, f"chunk {chunk_pos} abort tak terduga: {exc}")
+        writer.drain()
+        writer.stop()
+        raise
 
     flush_remaining()
     _async(_append_zero_targets, job_id, last_stats[0].get("zero_targets", []))

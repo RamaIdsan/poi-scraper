@@ -25,12 +25,23 @@ def main():
     parser.add_argument("--spec", required=True)
     parser.add_argument("--parts", default="parts")
     parser.add_argument("--workflow-result", default="success")
+    parser.add_argument("--plan-result", default="success")
     args = parser.parse_args()
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8-sig"))
     job_id = spec.get("job_id", "")
     user = spec.get("user", "")
     result_sheet = spec.get("result_sheet", "") or f"Result_{job_id}"
+
+    if args.plan_result != "success":
+        cloud.update_job(job_id, {
+            "status": "failed",
+            "error": "Plan gagal — cek log GitHub Actions (job 'plan'). Tidak ada chunk yang dijalankan.",
+            "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        cloud.append_log(job_id, user, "merge: plan gagal, tidak ada chunk dijalankan")
+        print("MERGE SKIPPED: plan failed", flush=True)
+        return
 
     files = [
         f for f in glob.glob(os.path.join(args.parts, "**", "*.csv"), recursive=True)
@@ -99,7 +110,7 @@ def main():
         # via exportCompleted(), karena service account tidak punya kuota Drive.
         print(f"WARN upload Drive gagal (akan diekspor oleh Apps Script): {exc}")
 
-    cloud.update_job(job_id, {
+    fields = {
         "status": status,
         "progress": f"100% ({len(full)} records)",
         "overall_progress": 100,
@@ -107,7 +118,19 @@ def main():
         "output_file_id": file_id,
         "output_url": link,
         "result_sheet": result_sheet,
-    })
+    }
+    if status == "failed":
+        # Jangan menimpa pesan error spesifik dari worker bila sudah ada.
+        try:
+            existing_error = cloud.get_job_field(job_id, "error")
+        except Exception:
+            existing_error = ""
+        if not existing_error:
+            fields["error"] = (
+                "Sebagian chunk gagal / tidak berjalan (workflow-result=" + args.workflow_result +
+                "). Cek log GitHub Actions."
+            )
+    cloud.update_job(job_id, fields)
     cloud.append_log(job_id, user, f"selesai: {before} -> {len(full)} records (dedup), status={status}")
     print(f"MERGED {before} -> {len(full)} records | {link}", flush=True)
 

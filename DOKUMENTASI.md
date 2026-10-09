@@ -345,13 +345,21 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 2. Trigger per menit / submit memanggil `dispatch()` yang memicu workflow GitHub
    untuk job `queued` selama slot < `MAX_PARALLEL`.
 3. GitHub Actions:
-   - `plan_chunks.py` menghitung target & memecah per provinsi bila besar.
+   - `plan_chunks.py` menghitung target & memecah per provinsi bila besar, lalu
+     mengeluarkan `idxs` + `entries` (`{idx, chunk, total}`).
+   - Matrix workflow memakai **satu kunci** (`idx`) dengan nama job eksplisit
+     (`scrape #<idx>`) — menghindari error GitHub "Unable to create a unique name".
    - Untuk tiap chunk: `run_job.py` menjalankan scraper, **streaming** baris ke tab
      hasil, menulis `progress/current_target/listings_found/records/eta/run_url` dan `Logs`.
      Semua penulisan Sheets dilakukan lewat **thread latar (non-blocking)** agar proses
      scraping tidak menunggu jaringan (hemat ±2–7% waktu).
-   - `merge_parts.py` menggabungkan semua chunk, dedup, menulis ulang tab, upload CSV Drive,
-     set `status=done`.
+   - **Ketahanan target**: satu target yang gagal setelah beberapa percobaan **dilewati**
+     (dicatat di `failed_targets`), chunk tetap lanjut. Chunk dihentikan hanya bila
+     **8 target gagal berturut-turut** (indikasi blokir/limit) → status `failed` dengan
+     pesan jelas + checkpoint (bisa di-Resume).
+   - `merge_parts.py` menggabungkan semua chunk + baris tab, dedup, menulis ulang tab,
+     upload CSV Drive, set `status=done`. Bila `plan` gagal atau tidak ada artifact,
+     merge tetap jalan dan menuliskan **alasan** ke kolom `error`.
 4. Dashboard memantau lewat kolom-kolom tersebut.
 
 **Judul job** diberi nama `Result_<brand>_<YYYYMMDD_HHMM>_<job8>` agar mudah dikenali.

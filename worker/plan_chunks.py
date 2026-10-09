@@ -34,13 +34,16 @@ def main():
     if not entries:
         entries = [(0, "__SKIP__")]
 
-    matrix = {
-        "chunk": [e[1] for e in entries],
-        "idx": [e[0] for e in entries],
-        "total": [n] * len(entries),
-    }
+    idxs = [e[0] for e in entries]
+    entry_list = [{"idx": e[0], "chunk": e[1], "total": n} for e in entries]
 
-    print(json.dumps({"matrix": matrix, "chunks": n, "todo": len(entries), "counts": counts}, ensure_ascii=False))
+    print(json.dumps({
+        "idxs": idxs,
+        "entries": entry_list,
+        "chunks": n,
+        "todo": len(entries),
+        "counts": counts,
+    }, ensure_ascii=False))
 
 
 if __name__ == "__main__":

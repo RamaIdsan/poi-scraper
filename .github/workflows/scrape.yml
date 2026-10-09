@@ -21,7 +21,8 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      idxs: ${{ steps.plan.outputs.idxs }}
+      entries: ${{ steps.plan.outputs.entries }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,19 +33,33 @@ jobs:
         env:
           SPEC_JSON: ${{ github.event.inputs.spec_json }}
         run: |
+          set -o pipefail
           printf '%s' "$SPEC_JSON" > spec.json
-          python worker/plan_chunks.py --spec spec.json | tee plan.json
-          MATRIX=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['matrix']))")
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          if ! python worker/plan_chunks.py --spec spec.json > plan.json; then
+            echo "PLAN FAILED — output:"
+            cat plan.json || true
+            exit 1
+          fi
+          cat plan.json
+          IDXS=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['idxs']))")
+          ENTRIES=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['entries']))")
+          if [ "$IDXS" = "[]" ]; then
+            echo "Matrix kosong — tidak ada chunk untuk dijalankan."
+            exit 1
+          fi
+          echo "idxs=$IDXS" >> "$GITHUB_OUTPUT"
+          echo "entries=$ENTRIES" >> "$GITHUB_OUTPUT"
 
   scrape:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    name: "scrape #${{ matrix.idx }}"
     strategy:
       fail-fast: false
       max-parallel: 1
-      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+      matrix:
+        idx: ${{ fromJson(needs.plan.outputs.idxs) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,17 +70,22 @@ jobs:
       - name: Run scrape chunk
         env:
           SPEC_JSON: ${{ github.event.inputs.spec_json }}
+          ENTRIES: ${{ needs.plan.outputs.entries }}
+          CHUNK_IDX: ${{ matrix.idx }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           SHARE_EMAIL: ${{ secrets.SHARE_EMAIL }}
         run: |
           printf '%s' "$SPEC_JSON" > spec.json
+          CHUNK_LABEL=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .chunk')
+          CHUNK_TOTAL=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .total')
+          echo "Chunk #$CHUNK_IDX label='$CHUNK_LABEL' total=$CHUNK_TOTAL"
           python worker/run_job.py \
             --spec spec.json \
-            --provinsi "${{ matrix.chunk }}" \
-            --chunk-index ${{ matrix.idx }} \
-            --total-chunks ${{ matrix.total }}
+            --provinsi "$CHUNK_LABEL" \
+            --chunk-index "$CHUNK_IDX" \
+            --total-chunks "$CHUNK_TOTAL"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -84,16 +104,22 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: parts
       - name: Merge and publish
         env:
           SPEC_JSON: ${{ github.event.inputs.spec_json }}
           WF_RESULT: ${{ needs.scrape.result }}
+          PLAN_RESULT: ${{ needs.plan.result }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           SHARE_EMAIL: ${{ secrets.SHARE_EMAIL }}
         run: |
           printf '%s' "$SPEC_JSON" > spec.json
-          python worker/merge_parts.py --spec spec.json --parts parts --workflow-result "$WF_RESULT"
+          python worker/merge_parts.py \
+            --spec spec.json \
+            --parts parts \
+            --workflow-result "$WF_RESULT" \
+            --plan-result "$PLAN_RESULT"

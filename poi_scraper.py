@@ -1390,10 +1390,13 @@ def main(
         "geo_filtered": 0,
         "errors": 0,
         "zero_result_targets": 0,
+        "failed_targets": 0,
     }
 
     last_saved_index = len(data)
     seen_url_ids = set()
+    consecutive_failures = 0
+    max_consecutive_failures = 8
 
     browser = None
     try:
@@ -1480,17 +1483,32 @@ def main(
                         break
 
                 if not grid_succeeded:
-                    logger.error(f"Koneksi terputus total pada pencarian '{search_query}'. Script dihentikan agar progress dapat dilanjutkan dengan aman (Resume).")
-                    stats["rows_completed"] = index
-                    save_checkpoint(state_path, {
-                        "next_row_index": index,
-                        "last_completed_admin": df.iloc[index - 1]["admin"] if index > 0 else "",
-                        "last_query": search_query,
-                        "country": row_country,
-                        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "stats": stats,
-                    })
-                    sys.exit(1)
+                    stats["failed_targets"] += 1
+                    consecutive_failures += 1
+                    logger.warning(
+                        f"Target dilewati setelah {retries} percobaan gagal "
+                        f"({consecutive_failures} berturut-turut): {search_query}"
+                    )
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.error(
+                            f"{consecutive_failures} target berturut-turut gagal. "
+                            "Menghentikan chunk agar aman di-Resume."
+                        )
+                        stats["rows_completed"] = index
+                        save_checkpoint(state_path, {
+                            "next_row_index": index,
+                            "last_completed_admin": df.iloc[index - 1]["admin"] if index > 0 else "",
+                            "last_query": search_query,
+                            "country": row_country,
+                            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "stats": stats,
+                        })
+                        raise RuntimeError(
+                            f"Koneksi/limit terputus: {consecutive_failures} target berturut-turut gagal "
+                            f"pada '{search_query}'."
+                        )
+                    continue
+                consecutive_failures = 0
 
                 stats["listings_found"] += len(listing_urls)
                 if not listing_urls:
