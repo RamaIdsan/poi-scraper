@@ -169,6 +169,16 @@ def fetch_tab_rows(tab_name):
     ).execute().get("values", [])
 
 
+def fetch_column_values(tab_name, col_letter):
+    """Ambil satu kolom tab (mis. 'R' untuk Query_Target) sebagai list nilai."""
+    sheets, _ = _services()
+    sid = _spreadsheet_id()
+    values = sheets.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{tab_name}!{col_letter}:{col_letter}"
+    ).execute().get("values", [])
+    return [row[0] if row else "" for row in values]
+
+
 def ensure_tab(tab_name, headers):
     """Buat tab bila belum ada, lalu kosongkan isinya (sisakan header)."""
     sheets, _ = _services()
@@ -285,6 +295,7 @@ def _locked(fn):
 
 for _name in (
     "find_job_row", "update_job", "get_job_field", "_ensure_sheet", "fetch_tab_rows",
-    "ensure_tab", "ensure_header", "append_rows", "overwrite_tab", "append_log", "upload_csv",
+    "fetch_column_values", "ensure_tab", "ensure_header", "append_rows", "overwrite_tab",
+    "append_log", "upload_csv",
 ):
     globals()[_name] = _locked(globals()[_name])

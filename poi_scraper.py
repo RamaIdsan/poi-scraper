@@ -124,6 +124,7 @@ COUNTRY_PROFILES = {
             "kecamatan": "KECAMATAN",
             "kelurahan": "KkELURAHAN",
         },
+        "kota_code_column": "Kode Kota/Kab",
         "radius_by_level": {
             "provinsi": 150.0,
             "kota": 40.0,
@@ -380,6 +381,50 @@ def resolve_admin_path(filename):
     raise FileNotFoundError(f"File data admin tidak ditemukan: {filename}")
 
 
+KOTA_NAME_OVERRIDES = {
+    "Adm. Kep. Seribu": "Kabupaten Administrasi Kepulauan Seribu",
+}
+
+
+def kota_prefix_from_code(kode):
+    """Tentukan prefix wilayah dari kode BPS: bagian kedua >= 71 -> Kota, lainnya Kabupaten."""
+    kode = clean_text(kode)
+    if kode.count(".") != 1:
+        return None
+    match = re.fullmatch(r"(\d{2})\.(\d+)", kode)
+    if not match:
+        return None
+    return "Kota" if int(match.group(2)) >= 71 else "Kabupaten"
+
+
+def normalize_kota_names(names, codes):
+    """Perbaiki nama kota/kabupaten: prefix Kabupaten/Kota + perluasan abreviasi.
+
+    Idempoten: nama yang sudah berprefix "Kota "/"Kabupaten " tidak diubah.
+    """
+    input_len = len(names) if hasattr(names, "__len__") else None
+    result = []
+    for i, name in enumerate(names):
+        clean = clean_text(name)
+        kode = codes.iloc[i] if hasattr(codes, "iloc") else list(codes)[i]
+        if clean in KOTA_NAME_OVERRIDES:
+            result.append(KOTA_NAME_OVERRIDES[clean])
+            continue
+        if clean.startswith("Kota Adm. "):
+            result.append("Kota Administrasi " + clean[len("Kota Adm. "):])
+            continue
+        if clean.startswith("Kep. "):
+            clean = "Kepulauan " + clean[len("Kep. "):]
+        if clean.startswith("Kota ") or clean.startswith("Kabupaten "):
+            result.append(clean)
+            continue
+        prefix = kota_prefix_from_code(kode)
+        result.append(f"{prefix} {clean}" if prefix else clean)
+    if input_len is not None and len(result) != input_len:
+        raise ValueError("normalize_kota_names: hasil tidak sepanjang input")
+    return result
+
+
 def load_admin_data(profile):
     filename = profile["admin_file"]
     path = resolve_admin_path(filename)
@@ -395,6 +440,14 @@ def load_admin_data(profile):
         )
 
     out = pd.DataFrame()
+    kode_col = profile.get("kota_code_column")
+    if kode_col and kode_col in df.columns:
+        kode = df[kode_col].map(clean_text)
+        keep = kode.str.count(r"\.") <= 1
+        if not keep.all():
+            df = df[keep].copy()
+            kode = kode[keep]
+        df[column_map["kota"]] = normalize_kota_names(df[column_map["kota"]], kode)
     for internal, source in column_map.items():
         out[internal] = df[source].map(clean_text)
 
@@ -1740,34 +1793,58 @@ def spec_to_targets(spec, admin_df, profile):
     ]
 
 
-def plan_chunks(spec, profile, threshold=40):
-    """Pecah spec menjadi beberapa chunk per provinsi bila target besar (> threshold)."""
+def plan_chunks(spec, profile, threshold=40, chunk_size=80, max_chunks=200):
+    """Pecah spec menjadi chunk per provinsi, lalu batch per jumlah target.
+
+    - `chunk_size`: maksimum target per chunk (agar tiap job GitHub Actions jauh dari timeout).
+    - `max_chunks`: batas jumlah chunk (matrix GitHub maksimum 256 job); bila terlampaui,
+      ukuran batch dinaikkan otomatis.
+    - Setiap chunk membawa `target_start`/`target_end` (irisan deterministik daftar target
+      provinsi) dan `chunk_label` unik untuk resume.
+    """
     admin_df = load_admin_data(profile)
     full_targets = spec_to_targets(spec, admin_df, profile)
     if len(full_targets) <= threshold or spec.get("explicit_admins"):
         return [spec], [len(full_targets)]
 
     top_level = profile["levels"][0]
-    top_col = columns_by_level(profile)[top_level][0]
     provinces = _spec_scope(spec, top_level)
     if not provinces:
         provinces = [k[0] for k in unique_keys(admin_df, columns_by_level(profile)[top_level])]
 
-    chunks = []
-    counts = []
+    per_province = []
     for prov in provinces:
         chunk = json.loads(json.dumps(spec))
         chunk.setdefault("scope", {})
         chunk["scope"][top_level] = [prov]
         targets = spec_to_targets(chunk, admin_df, profile)
-        if not targets:
-            continue
-        chunks.append(chunk)
-        counts.append(len(targets))
+        if targets:
+            per_province.append((prov, chunk, targets))
+
+    total = sum(len(targets) for _, _, targets in per_province)
+    size = max(1, int(chunk_size or 1))
+    if max_chunks:
+        def _count(sz):
+            return sum(max(1, math.ceil(len(t) / sz)) for _, _, t in per_province)
+        while _count(size) > max_chunks:
+            size += 1
+
+    chunks = []
+    counts = []
+    for prov, base, targets in per_province:
+        n = len(targets)
+        batches = max(1, math.ceil(n / size))
+        for batch in range(batches):
+            chunk = json.loads(json.dumps(base))
+            chunk["target_start"] = batch * size
+            chunk["target_end"] = min((batch + 1) * size, n)
+            chunk["chunk_label"] = prov if batches == 1 else f"{prov} [{batch + 1}/{batches}]"
+            chunks.append(chunk)
+            counts.append(chunk["target_end"] - chunk["target_start"])
     return chunks, counts
 
 
-def run_job(spec_path, progress_callback=None, data_callback=None):
+def run_job(spec_path, progress_callback=None, data_callback=None, target_filter=None):
     """Jalankan satu job dari file spec JSON. Mengembalikan manifest."""
     spec_path = Path(spec_path)
     spec = json.loads(spec_path.read_text(encoding="utf-8-sig"))
@@ -1779,6 +1856,14 @@ def run_job(spec_path, progress_callback=None, data_callback=None):
 
     admin_df = load_admin_data(profile)
     targets = spec_to_targets(spec, admin_df, profile)
+    start = spec.get("target_start")
+    end = spec.get("target_end")
+    if start is not None or end is not None:
+        start_idx = max(0, int(start or 0))
+        end_idx = int(end) if end is not None else None
+        targets = targets[start_idx:end_idx]
+    if target_filter is not None:
+        targets = target_filter(targets)
     if not targets:
         raise ValueError("Spec tidak menghasilkan target.")
 

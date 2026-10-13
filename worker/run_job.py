@@ -102,7 +102,7 @@ def _run_id():
     return os.environ.get("GITHUB_RUN_ID", "")
 
 
-def _update_chunk_json(job_id, idx, label, status, records, stats=None):
+def _update_chunk_json(job_id, idx, label, status, records, stats=None, extra=None):
     """Catat status tiap chunk di kolom chunks_json (dijalankan di thread writer)."""
     try:
         raw = cloud.get_job_field(job_id, "chunks_json") or ""
@@ -116,6 +116,8 @@ def _update_chunk_json(job_id, idx, label, status, records, stats=None):
         # Hanya angka ringkas; daftar zero_targets tidak dimasukkan agar kolom
         # chunks_json tidak melebihi batas 50.000 karakter.
         entry["stats"] = {k: v for k, v in stats.items() if k != "zero_targets"}
+    if extra:
+        entry.update(extra)
     data[str(idx)] = entry
     cloud.update_job(job_id, {"chunks_json": json.dumps(data, ensure_ascii=False)})
 
@@ -147,6 +149,9 @@ def main():
     parser.add_argument("--provinsi", default="")
     parser.add_argument("--chunk-index", type=int, default=None)
     parser.add_argument("--total-chunks", type=int, default=1)
+    parser.add_argument("--chunk-label", default="", help="Label unik chunk (untuk resume & tampilan).")
+    parser.add_argument("--start", default="", help="Indeks awal irisan target di provinsi ini.")
+    parser.add_argument("--end", default="", help="Indeks akhir (eksklusif) irisan target.")
     args = parser.parse_args()
 
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8-sig"))
@@ -158,7 +163,7 @@ def main():
 
     chunk_idx = args.chunk_index if args.chunk_index is not None else 0
     total_chunks = max(1, int(args.total_chunks or 1))
-    chunk_label = args.provinsi or "semua"
+    chunk_label = args.chunk_label or args.provinsi or "semua"
     chunk_pos = f"{chunk_idx + 1}/{total_chunks}"
 
     if args.provinsi == "__SKIP__":
@@ -169,6 +174,12 @@ def main():
     if args.provinsi:
         spec.setdefault("scope", {})
         spec["scope"][profile["levels"][0]] = [args.provinsi]
+    start_arg = str(args.start or "").strip()
+    end_arg = str(args.end or "").strip()
+    if start_arg:
+        spec["target_start"] = int(start_arg)
+    if end_arg:
+        spec["target_end"] = int(end_arg)
     spec["chunk_index"] = chunk_idx
     spec["total_chunks"] = total_chunks
     spec["output_dir"] = "output"
@@ -203,10 +214,49 @@ def main():
 
     start_ts = time.time()
     last_emit = [0.0]
+    last_ckpt = [0.0]
+    last_zero_flush = [0.0]
     streamed = [0]
     last_flush = [0.0]
     last_data = [[]]
     last_stats = [{}]
+
+    target_column = cloud._col_letter(list(s.OUTPUT_COLUMNS).index("Query_Target"))
+
+    def fetch_done_targets():
+        """Target yang barisnya sudah masuk tab hasil (penanda selesai untuk resume)."""
+        try:
+            values = cloud.fetch_column_values(result_sheet, target_column)
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARN baca kolom target gagal: {exc}")
+            return set()
+        return {str(v).strip() for v in values if str(v).strip()}
+
+    def make_target_filter():
+        done = fetch_done_targets()
+        done.discard("Query_Target")
+        if not done:
+            return None
+
+        def _filter(targets):
+            idxs = [i for i, t in enumerate(targets) if t["admin"] in done]
+            if not idxs:
+                return targets
+            last = max(idxs)
+            kept = [t for i, t in enumerate(targets) if i == last or t["admin"] not in done]
+            skipped = len(targets) - len(kept)
+            if skipped > 0:
+                message = (
+                    f"chunk {chunk_pos}: resume — lewati {skipped} target selesai, "
+                    f"ulang target terakhir yang dikerjakan, sisa {len(kept)} target"
+                )
+                _async(cloud.append_log, job_id, user, message)
+                print("RESUME " + message, flush=True)
+            return kept
+
+        return _filter
+
+    target_filter = make_target_filter()
 
     def on_progress(stats, current, total, scraped, admin=""):
         last_stats[0] = stats
@@ -220,6 +270,13 @@ def main():
             ctrl = ""
         if ctrl in ("pause", "stop"):
             raise ControlStop(ctrl)
+        if now - last_ckpt[0] >= 60:
+            last_ckpt[0] = now
+            _async(_update_chunk_json, job_id, chunk_idx, chunk_label, "running", scraped, None,
+                   {"targets_done": current, "last_admin": admin})
+        if stats.get("zero_targets") and now - last_zero_flush[0] >= 120:
+            last_zero_flush[0] = now
+            _async(_append_zero_targets, job_id, list(stats["zero_targets"]))
         local = (current / total) if total else 1.0
         overall = round(((chunk_idx + local) / total_chunks) * 100, 2)
         elapsed = now - start_ts
@@ -261,7 +318,8 @@ def main():
         _async(cloud.update_job, job_id, {"records": streamed[0]})
 
     try:
-        manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data)
+        manifest = s.run_job(str(spec_file), progress_callback=on_progress, data_callback=on_data,
+                             target_filter=target_filter)
     except ControlStop as stop:
         checkpoint = {"chunk_index": chunk_idx, "chunk_label": chunk_label, "reason": stop.mode}
         new_status = "paused" if stop.mode == "pause" else "cancelled"
@@ -298,11 +356,21 @@ def main():
 
     flush_remaining()
     _async(_append_zero_targets, job_id, last_stats[0].get("zero_targets", []))
-    _async(_update_chunk_json, job_id, chunk_idx, chunk_label, "done", streamed[0], last_stats[0])
-    _async(
-        cloud.append_log, job_id, user,
-        f"chunk {chunk_pos} selesai: {manifest.get('records', 0)} records, {manifest.get('targets', 0)} target",
-    )
+    failed_targets = int(last_stats[0].get("failed_targets", 0) or 0)
+    final_status = "partial" if failed_targets > 0 else "done"
+    _async(_update_chunk_json, job_id, chunk_idx, chunk_label, final_status, streamed[0],
+           last_stats[0], {"targets_done": manifest.get("targets", 0), "last_admin": ""})
+    if failed_targets > 0:
+        _async(
+            cloud.append_log, job_id, user,
+            f"chunk {chunk_pos} selesai dengan {failed_targets} target gagal — "
+            "target tersebut akan dicoba lagi saat Resume",
+        )
+    else:
+        _async(
+            cloud.append_log, job_id, user,
+            f"chunk {chunk_pos} selesai: {manifest.get('records', 0)} records, {manifest.get('targets', 0)} target",
+        )
     writer.drain()
     writer.stop()
     print("CHUNK_DONE " + json.dumps(manifest, ensure_ascii=False), flush=True)

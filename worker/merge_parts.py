@@ -1,5 +1,6 @@
 """Gabungkan CSV hasil tiap chunk, dedup, tulis ke tab hasil, upload Drive."""
 import argparse
+import copy
 import glob
 import json
 import os
@@ -18,6 +19,32 @@ DEDUP_KEYS = [
     "Brand", "Name_geocode", "Address_geocode",
     "Latitude_geocode", "Longitude_geocode",
 ]
+
+
+def entry_targets(spec, profile, admin_df, entry):
+    """Hitung daftar target (admin) untuk satu entry plan."""
+    if not entry or entry.get("chunk") == "__SKIP__":
+        return set()
+    start = entry.get("start")
+    end = entry.get("end")
+    if start is None and end is None:
+        targets = s.spec_to_targets(spec, admin_df, profile)
+    else:
+        chunk_spec = copy.deepcopy(spec)
+        top_level = profile["levels"][0]
+        chunk_spec.setdefault("scope", {})
+        chunk_spec["scope"][top_level] = [entry["prov"]]
+        targets = s.spec_to_targets(chunk_spec, admin_df, profile)
+        targets = targets[int(start or 0): int(end) if end is not None else None]
+    return {t["admin"] for t in targets}
+
+
+def parse_env_list(name):
+    try:
+        value = json.loads(os.environ.get(name) or "[]")
+    except Exception:  # noqa: BLE001
+        return []
+    return value if isinstance(value, list) else []
 
 
 def main():
@@ -91,6 +118,44 @@ def main():
     keys = [c for c in DEDUP_KEYS if c in full.columns]
     full = full.drop_duplicates(subset=keys) if keys else full.drop_duplicates()
 
+    # 3) Audit cakupan target: bandingkan target yang direncanakan vs yang ada di hasil.
+    coverage_line = ""
+    missing_todo = set()
+    all_entries = parse_env_list("ALL_ENTRIES")
+    todo_entries = parse_env_list("PLAN_ENTRIES") or all_entries
+    if all_entries:
+        try:
+            profile = s.get_profile(spec.get("country", "indonesia"))
+            admin_df = s.load_admin_data(profile)
+            expected_all = set()
+            for entry in all_entries:
+                expected_all |= entry_targets(spec, profile, admin_df, entry)
+            expected_todo = set()
+            for entry in todo_entries:
+                expected_todo |= entry_targets(spec, profile, admin_df, entry)
+            present = {
+                str(v).strip() for v in full.get("Query_Target", pd.Series(dtype=str))
+                if str(v).strip()
+            }
+            zeros = set()
+            try:
+                zeros = set(json.loads(cloud.get_job_field(job_id, "zero_targets_json") or "[]") or [])
+            except Exception:  # noqa: BLE001
+                zeros = set()
+            verified = present | {str(z).strip() for z in zeros if str(z).strip()}
+            missing_all = expected_all - verified
+            missing_todo = expected_todo - verified
+            total_expected = len(expected_all)
+            covered = total_expected - len(missing_all)
+            coverage_line = f"cakupan target: {covered}/{total_expected}"
+            if missing_all:
+                sample = ", ".join(sorted(missing_all)[:10])
+                coverage_line += f" · belum terverifikasi {len(missing_all)} (mis. {sample})"
+            cloud.append_log(job_id, user, "audit " + coverage_line)
+            print("AUDIT " + coverage_line, flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARN audit cakupan gagal: {exc}")
+
     rows = full.values.tolist()
     try:
         cloud.overwrite_tab(result_sheet, list(s.OUTPUT_COLUMNS), rows)
@@ -110,22 +175,34 @@ def main():
         # via exportCompleted(), karena service account tidak punya kuota Drive.
         print(f"WARN upload Drive gagal (akan diekspor oleh Apps Script): {exc}")
 
+    progress_text = f"100% ({len(full)} records)"
+    if coverage_line:
+        progress_text += " · " + coverage_line
     fields = {
         "status": status,
-        "progress": f"100% ({len(full)} records)",
+        "progress": progress_text,
         "overall_progress": 100,
         "finished_at": finished,
         "output_file_id": file_id,
         "output_url": link,
         "result_sheet": result_sheet,
     }
+    if status == "done" and missing_todo:
+        # Ada target dari chunk yang dijalankan dispatch ini yang belum terverifikasi
+        # (gagal/terhenti). Tandai failed agar tombol Resume bisa mengejarnya.
+        status = "failed"
+        fields["status"] = status
+        fields["error"] = (
+            f"Audit cakupan: {len(missing_todo)} target belum terverifikasi dari chunk yang "
+            "dijalankan. Klik Resume untuk melanjutkan — data tetap tersimpan di tab hasil ini."
+        )
     if status == "failed":
         # Jangan menimpa pesan error spesifik dari worker bila sudah ada.
         try:
             existing_error = cloud.get_job_field(job_id, "error")
-        except Exception:
+        except Exception:  # noqa: BLE001
             existing_error = ""
-        if not existing_error:
+        if not existing_error and "error" not in fields:
             fields["error"] = (
                 "Sebagian chunk gagal / tidak berjalan (workflow-result=" + args.workflow_result +
                 "). Cek log GitHub Actions."

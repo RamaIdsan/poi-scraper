@@ -23,11 +23,13 @@ jobs:
     outputs:
       idxs: ${{ steps.plan.outputs.idxs }}
       entries: ${{ steps.plan.outputs.entries }}
+      all_entries: ${{ steps.plan.outputs.all_entries }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
       - run: pip install -r requirements.txt
       - id: plan
         env:
@@ -43,29 +45,36 @@ jobs:
           cat plan.json
           IDXS=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['idxs']))")
           ENTRIES=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['entries']))")
+          ALL_ENTRIES=$(python -c "import json;print(json.dumps(json.load(open('plan.json'))['all_entries']))")
           if [ "$IDXS" = "[]" ]; then
             echo "Matrix kosong — tidak ada chunk untuk dijalankan."
             exit 1
           fi
           echo "idxs=$IDXS" >> "$GITHUB_OUTPUT"
           echo "entries=$ENTRIES" >> "$GITHUB_OUTPUT"
+          echo "all_entries=$ALL_ENTRIES" >> "$GITHUB_OUTPUT"
 
   scrape:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360
     name: "scrape #${{ matrix.idx }}"
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 3
       matrix:
         idx: ${{ fromJson(needs.plan.outputs.idxs) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
       - run: pip install -r requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
       - run: python -m playwright install --with-deps chromium
       - name: Run scrape chunk
         env:
@@ -78,15 +87,21 @@ jobs:
           SHARE_EMAIL: ${{ secrets.SHARE_EMAIL }}
         run: |
           printf '%s' "$SPEC_JSON" > spec.json
-          CHUNK_LABEL=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .chunk')
+          CHUNK_LABEL=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .chunk // empty')
           CHUNK_TOTAL=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .total')
-          echo "Chunk #$CHUNK_IDX label='$CHUNK_LABEL' total=$CHUNK_TOTAL"
+          CHUNK_PROV=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .prov // empty')
+          CHUNK_START=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .start // empty')
+          CHUNK_END=$(printf '%s' "$ENTRIES" | jq -r --argjson i "$CHUNK_IDX" '.[] | select(.idx==$i) | .end // empty')
+          echo "Chunk #$CHUNK_IDX label='$CHUNK_LABEL' prov='$CHUNK_PROV' range=$CHUNK_START..$CHUNK_END total=$CHUNK_TOTAL"
           python worker/run_job.py \
             --spec spec.json \
-            --provinsi "$CHUNK_LABEL" \
+            --provinsi "$CHUNK_PROV" \
             --chunk-index "$CHUNK_IDX" \
-            --total-chunks "$CHUNK_TOTAL"
-      - uses: actions/upload-artifact@v4
+            --total-chunks "$CHUNK_TOTAL" \
+            --chunk-label "$CHUNK_LABEL" \
+            --start "$CHUNK_START" \
+            --end "$CHUNK_END"
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: part-${{ matrix.idx }}
@@ -98,12 +113,13 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
       - run: pip install -r requirements.txt
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           path: parts
@@ -112,6 +128,8 @@ jobs:
           SPEC_JSON: ${{ github.event.inputs.spec_json }}
           WF_RESULT: ${{ needs.scrape.result }}
           PLAN_RESULT: ${{ needs.plan.result }}
+          PLAN_ENTRIES: ${{ needs.plan.outputs.entries }}
+          ALL_ENTRIES: ${{ needs.plan.outputs.all_entries }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}

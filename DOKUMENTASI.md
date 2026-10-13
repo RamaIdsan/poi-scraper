@@ -93,8 +93,10 @@ Contoh scope multi-nilai:
 ```json
 {"provinsi": ["Sumatera Utara", "Riau"], "kota": ["Kota Medan", "Kota Pekanbaru"]}
 ```
-Catatan: nama kota dipakai apa adanya; bila dua provinsi terpilih punya kota bernama
-sama, memilih nama itu berlaku untuk keduanya (kasus jarang).
+Catatan: nama kota/kabupaten sudah dibakukan berprefix **`Kabupaten `/`Kota `** (mis.
+`Kabupaten Tangerang` vs `Kota Tangerang`) agar pencarian Google Maps lebih akurat. Bila dua
+provinsi terpilih punya kota bernama sama (mis. `Kabupaten Sorong` di Papua Barat & Papua Barat
+Daya), nama itu berlaku untuk keduanya.
 
 ### 3.5 Mode cakupan
 | Mode | Arti | Kapan dipakai |
@@ -345,21 +347,30 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 2. Trigger per menit / submit memanggil `dispatch()` yang memicu workflow GitHub
    untuk job `queued` selama slot < `MAX_PARALLEL`.
 3. GitHub Actions:
-   - `plan_chunks.py` menghitung target & memecah per provinsi bila besar, lalu
-     mengeluarkan `idxs` + `entries` (`{idx, chunk, total}`).
+   - `plan_chunks.py` menghitung target, memecah **per provinsi** lalu **per batch ±80 target**
+     (agar tiap job jauh dari batas waktu GitHub 6 jam; scope raksasa otomatis dibatasi
+     maksimum ±200 chunk/matrix), dan mengeluarkan `entries` (`{idx, chunk, total, prov, start, end}`)
+     + `all_entries` untuk audit cakupan.
    - Matrix workflow memakai **satu kunci** (`idx`) dengan nama job eksplisit
      (`scrape #<idx>`) — menghindari error GitHub "Unable to create a unique name".
+     Beberapa chunk berjalan **paralel (maks 3)**.
    - Untuk tiap chunk: `run_job.py` menjalankan scraper, **streaming** baris ke tab
      hasil, menulis `progress/current_target/listings_found/records/eta/run_url` dan `Logs`.
      Semua penulisan Sheets dilakukan lewat **thread latar (non-blocking)** agar proses
      scraping tidak menunggu jaringan (hemat ±2–7% waktu).
+   - **Resume per-target**: saat chunk mulai, kolom `Query_Target` tab hasil dibaca — target
+     yang barisnya sudah ada **dilewati**, target terakhir yang sedang dikerjakan **diulang**
+     (aman bila proses terhenti di tengah target), dan semua target yang belum punya baris
+     dicoba lagi. Chunk yang punya target gagal ditandai `partial` sehingga ikut diulang saat Resume.
    - **Ketahanan target**: satu target yang gagal setelah beberapa percobaan **dilewati**
      (dicatat di `failed_targets`), chunk tetap lanjut. Chunk dihentikan hanya bila
      **8 target gagal berturut-turut** (indikasi blokir/limit) → status `failed` dengan
      pesan jelas + checkpoint (bisa di-Resume).
    - `merge_parts.py` menggabungkan semua chunk + baris tab, dedup, menulis ulang tab,
-     upload CSV Drive, set `status=done`. Bila `plan` gagal atau tidak ada artifact,
-     merge tetap jalan dan menuliskan **alasan** ke kolom `error`.
+     upload CSV Drive, lalu **audit cakupan**: target yang direncanakan vs yang ada di hasil
+     (target 0-hasil dikecualikan). Bila ada target dari chunk yang dijalankan belum
+     terverifikasi → `status=failed` + pesan agar klik **Resume** (data tetap di tab yang sama).
+     Bila `plan` gagal atau tidak ada artifact, merge tetap jalan dan menuliskan **alasan** ke kolom `error`.
 4. Dashboard memantau lewat kolom-kolom tersebut.
 
 **Judul job** diberi nama `Result_<brand>_<YYYYMMDD_HHMM>_<job8>` agar mudah dikenali.
@@ -382,13 +393,17 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 | **`Gagal memuat detail: jobs.get gagal: null`** | Baris lama lebih pendek dari header → nilai `undefined` tidak bisa diserialisasi. Sudah diperbaiki (`readTable_` mengisi sel kosong + `getJob_` disanitasi). Redeploy Apps Script. |
 | **`output_url` kosong / CSV tidak ada** | Penyebab umum: **service account tidak punya kuota Drive pribadi**. Solusi: CSV diekspor oleh **Apps Script** (akun Anda). Set `DRIVE_FOLDER_ID` (Script Property / `setDriveFolder(id)`) dan pastikan trigger `exportCompleted` aktif (`setupTriggers()`), atau jalankan `exportCompleted()` manual. Tombol **csv** di dashboard juga bisa mengunduh langsung dari tab hasil (export URL) sebelum file Drive siap. |
 | **Progress format lama `x% (n records) \| a/b`** | Worker di GitHub masih versi lama → `git push origin main` lalu jalankan job baru. |
+| **Job kena "maximum execution time of 5h50m"** | Terjadi pada alur lama (1 chunk = 1 provinsi besar). Sudah diperbaiki: chunk dipecah ±80 target. Push repo terbaru, lalu **Resume** job — target yang sudah masuk tab dilewati otomatis. |
+| **Job `failed` dengan pesan "Audit cakupan: N target belum terverifikasi"** | Sebagian target dari chunk yang dijalankan belum punya baris (gagal/terhenti). Klik **Resume**; hanya target tersebut yang dikerjakan, hasil tetap di tab yang sama. |
 | **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |
 
 ---
 
 ## 10. Batasan & catatan
 
-- GitHub Actions: maksimum **6 jam/job**; scope besar otomatis dipecah per provinsi.
+- GitHub Actions: maksimum **6 jam/job**; scope besar otomatis dipecah per provinsi **dan
+  per batch ±80 target** (batas ±200 chunk per run). Job yang terhenti bisa di-**Resume** —
+  target yang sudah masuk tab hasil dilewati otomatis, hasil tetap di tab/CSV yang sama.
 - Google Sheets: **10 juta sel/spreadsheet**.
 - IP GitHub (Azure) lebih mudah diblokir Google → hasil bersifat **best-effort**.
 - Streaming memunculkan duplikat sementara; dibersihkan saat selesai.
@@ -398,6 +413,9 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
   default `keep_no_coords=true`.
 - Paralel 3 (default) menaikkan peluang rate-limit; bisa diturunkan via `setMaxParallel(n)`.
 - Public repo: menit Actions gratis; kode + CSV admin publik.
+- Nama wilayah Indonesia sudah dibakukan (`Kabupaten X`/`Kota X`, DKI `Kota Administrasi …`).
+  Beberapa kabupaten hasil pemekaran provinsi tampil di dua provinsi (Sorong, Deiyai, Nabire,
+  Paniai) — keduanya disengaja; dedup `Place_ID` tetap mencegah baris ganda di hasil.
 
 ---
 
@@ -406,6 +424,7 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 ```
 poi_scraper.py         # scraper + job-mode
 admin/build_index.py   # generator index dropdown
+admin/fix_admin_names.py # perbaiki nama wilayah CSV admin (sekali jalan)
 admin/id_index.json    # index Indonesia (provinsi/kota/kecamatan)
 admin/ph_index.json    # index Philippines (province/city)
 worker/plan_chunks.py  # pecah spec -> chunk provinsi
