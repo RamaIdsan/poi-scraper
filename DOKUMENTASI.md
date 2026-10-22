@@ -375,6 +375,9 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
      (dicatat di `failed_json`), chunk tetap lanjut. Chunk dihentikan hanya bila
      **8 target gagal berturut-turut** (indikasi blokir/limit) → status `failed` dengan
      pesan jelas + checkpoint (bisa di-Resume).
+   - **Watchdog**: job aktif tanpa update >30 menit ditandai `failed` — tetapi watchdog memverifikasi
+     status run GitHub lebih dulu (job dengan run `in_progress/queued` tidak akan difailkan), dan
+     status `failed` palsu di-auto-heal bila run masih aktif. Resume juga ditolak selama run masih aktif.
    - `merge_parts.py` menggabungkan semua chunk + baris tab, **dedup best-record**
      (per `Place_ID` dipilih baris terlengkap dan kolom kosong diisi dari duplikatnya),
      menulis ulang tab, upload CSV Drive, lalu **audit cakupan berbasis `JobChunks`**
@@ -407,6 +410,7 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 | **Job `failed` dengan pesan "Audit cakupan: N target belum terverifikasi"** | Sebagian target dari chunk yang dijalankan belum terverifikasi (gagal/terhenti). Klik **Resume**; hanya target tersebut yang dikerjakan, hasil tetap di tab yang sama. |
 | **Resume mengulang dari awal** | Sudah diperbaiki: status chunk di tab `JobChunks` + matching target ternormalisasi. Pastikan repo & `Code.gs` sudah versi terbaru, lalu jalankan `setup()`. |
 | **Job berhenti sendiri / `failed` setelah 30 menit tanpa update** | Watchdog `dispatch()` menandai job stuck. Klik **Resume**; target yang sudah masuk tab dilewati. |
+| **Status `failed` padahal chunk masih berjalan** | Bug timezone watchdog (diperbaiki v2026-10-22.2: parse lokal+UTC + verifikasi status run GitHub). Redeploy `Code.gs`; status akan **auto-heal** kembali `running`, atau tunggu merge akhir. |
 | **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |
 
 ---

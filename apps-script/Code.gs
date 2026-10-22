@@ -20,7 +20,7 @@ var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-22.1";
+var APP_VERSION = "2026-10-22.2";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -106,6 +106,60 @@ function chunkDoneLabels_(jobId) {
     if (String(c.status || "").toLowerCase() === "done" && c.label) out.push(c.label);
   });
   return out;
+}
+
+// ------------------------------------------------------------
+// Helper waktu & status run GitHub (watchdog anti false-failed)
+// ------------------------------------------------------------
+var ACTIVE_RUN_STATUSES = ["queued", "waiting", "pending", "in_progress", "requested"];
+
+function parseTsMs_(value) {
+  // Terima timestamp lokal maupun UTC (worker menulis ISO UTC; Apps Script lokal).
+  var s = String(value || "").trim();
+  if (!s) return 0;
+  var base = s.replace(" ", "T");
+  var best = 0;
+  function consider(text) {
+    var t = new Date(text).getTime();
+    if (!isNaN(t) && t > best) best = t;
+  }
+  consider(base);
+  if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(base)) consider(base + "Z");
+  return best;
+}
+
+function parseLocalMs_(value) {
+  var s = String(value || "").trim();
+  if (!s) return 0;
+  var t = new Date(s.replace(" ", "T")).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+function githubRunStatus_(runId) {
+  runId = String(runId || "").trim();
+  if (!runId) return "";
+  var owner = prop_("GITHUB_OWNER");
+  var repo = prop_("GITHUB_REPO");
+  var pat = prop_("GITHUB_PAT");
+  if (!owner || !repo || !pat) return "";
+  try {
+    var res = UrlFetchApp.fetch(
+      "https://api.github.com/repos/" + owner + "/" + repo + "/actions/runs/" +
+      encodeURIComponent(runId),
+      {
+        headers: {
+          Authorization: "Bearer " + pat,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28"
+        },
+        muteHttpExceptions: true
+      }
+    );
+    if (res.getResponseCode() >= 300) return "";
+    return String((JSON.parse(res.getContentText()) || {}).status || "");
+  } catch (e) {
+    return "";
+  }
 }
 
 function sanitizeJob_(job) {
@@ -405,6 +459,12 @@ function jobControl_(user, payload, action) {
     if (status !== "paused" && status !== "cancelled" && status !== "failed") {
       throw new Error("Hanya job paused/cancelled/failed yang bisa dilanjutkan.");
     }
+    // Jangan biarkan Resume memicu run kedua saat run GitHub masih aktif.
+    var activeRun = githubRunStatus_(job.run_id) || githubRunStatus_(extractRunId_(job.run_url));
+    if (activeRun && ACTIVE_RUN_STATUSES.indexOf(activeRun) >= 0) {
+      throw new Error("Job masih berjalan di GitHub (status: " + activeRun +
+        "). Tunggu sampai prosesnya selesai sebelum Resume.");
+    }
     var spec = JSON.parse(job.spec_json);
     var done = chunkDoneLabels_(job.job_id);
     // Gabungkan juga label legacy dari chunks_json (job yang dimulai sebelum JobChunks).
@@ -544,27 +604,50 @@ function dispatch() {
 
     var jobs = readTable_("Jobs", JOB_HEADERS);
 
+    // Auto-heal: status "failed" palsu (mis. watchdog lama) padahal run GitHub masih aktif.
+    jobs.forEach(function (j) {
+      if (String(j.status || "").toLowerCase() !== "failed") return;
+      var err = String(j.error || "");
+      if (err.indexOf("Timeout:") < 0 && err.indexOf("tidak ada update") < 0) return;
+      var runStatus = githubRunStatus_(j.run_id);
+      if (runStatus && ACTIVE_RUN_STATUSES.indexOf(runStatus) >= 0) {
+        setJobField_(j.job_id, "status", "running");
+        setJobField_(j.job_id, "error", "");
+        setJobField_(j.job_id, "updated_at", nowStr_());
+        log_(j.job_id, j.user, "auto-heal: failed -> running (run GitHub masih aktif)");
+        j.status = "running";
+        j.error = "";
+      }
+    });
+
     // Watchdog: job aktif tanpa update >30 menit → failed, agar slot tidak nyangkut.
     var nowMs = new Date().getTime();
     var stuckMs = 30 * 60 * 1000;
     jobs.forEach(function (j) {
       var s = String(j.status || "").toLowerCase();
       if (s !== "running" && s !== "dispatched") return;
-      var ref = String(j.updated_at || "").trim();
-      if (!ref) {
-        // Job lama (worker sebelum fitur updated_at): jangan difailkan.
-        if (s === "running") return;
-        ref = String(j.started_at || j.created_at || "").trim();
-      }
-      var t = ref ? new Date(ref.replace(" ", "T")).getTime() : 0;
-      if (!t || (nowMs - t) > stuckMs) {
-        setJobField_(j.job_id, "status", "failed");
-        setJobField_(j.job_id, "error",
-          "Timeout: tidak ada update selama >30 menit. Klik Resume untuk melanjutkan.");
+      var born = parseLocalMs_(j.created_at);
+      if (born && (nowMs - born) < stuckMs) return;  // job masih baru
+      var rawUpdated = String(j.updated_at || "").trim();
+      if (!rawUpdated && s === "running") return;    // worker lama tanpa heartbeat
+      // "dispatched" ditulis Apps Script (waktu lokal); "running" ditulis worker (UTC).
+      var ref = (s === "dispatched")
+        ? (parseLocalMs_(rawUpdated) || parseLocalMs_(j.started_at) || born)
+        : (parseTsMs_(rawUpdated) || parseTsMs_(j.started_at) || born);
+      if (!ref) return;
+      if ((nowMs - ref) <= stuckMs) return;
+      // Verifikasi ke GitHub: jangan fail job yang run-nya masih aktif.
+      var runStatus = githubRunStatus_(j.run_id);
+      if (runStatus && ACTIVE_RUN_STATUSES.indexOf(runStatus) >= 0) {
         setJobField_(j.job_id, "updated_at", nowStr_());
-        log_(j.job_id, j.user, "watchdog: job ditandai failed (stuck >30 menit)");
-        j.status = "failed";
+        return;
       }
+      setJobField_(j.job_id, "status", "failed");
+      setJobField_(j.job_id, "error",
+        "Timeout: tidak ada update selama >30 menit. Klik Resume untuk melanjutkan.");
+      setJobField_(j.job_id, "updated_at", nowStr_());
+      log_(j.job_id, j.user, "watchdog: job ditandai failed (stuck >30 menit)");
+      j.status = "failed";
     });
 
     var active = jobs.filter(function (j) {

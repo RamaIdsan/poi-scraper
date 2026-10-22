@@ -56,7 +56,10 @@ GitHub Actions: plan → scrape (matrix per provinsi) → merge
   target terakhir diulang, sisanya dikerjakan.
 - Audit cakupan di merge **berbasis `JobChunks`** (status + planned/done + failed_json), bukan baris hasil
   (dedup Place_ID menghapus baris target lain). Job lama tanpa data chunk → audit informatif (tidak failed).
-- `Jobs.updated_at` diisi otomatis oleh `cloud.update_job`; dipakai watchdog dispatch (>30 mnt tanpa update → failed).
+- `Jobs.updated_at` diisi otomatis oleh `cloud.update_job` (**ISO UTC dengan offset**); watchdog dispatch
+  mem-parse lokal+UTC, memverifikasi **status run GitHub** (jangan fail job yang masih `in_progress/queued`),
+  dan auto-heal status `failed` palsu (`error` mengandung "Timeout:") bila run masih aktif. Resume ditolak
+  selama run GitHub masih aktif (mencegah dua run paralel).
 - Kapasitas aman: **MAX_PARALLEL=5** (job) × **MAX_CHUNK_PARALLEL=2** (GitHub repo variable) = 10 chunk aktif.
   Batas: runner Free 20, Sheets 60 read & 60 write/menit per service account, 10 juta sel/spreadsheet.
 - Nama wilayah Indonesia **wajib berprefix** `Kabupaten `/`Kota ` (mis. `Kabupaten Tangerang`),
@@ -85,8 +88,8 @@ GitHub Actions: plan → scrape (matrix per provinsi) → merge
 Catatan: perubahan **worker/workflow saja** (bukan header/`Code.gs`) cukup langkah 1 (push).
 
 ## Status saat ini
-- Versi aplikasi terakhir: **v2026-10-22.1** (JobChunks, resume anti-ulang, audit chunk, retry 429,
-  watchdog, dedup best-record, throttle kapasitas 5×2).
+- Versi aplikasi terakhir: **v2026-10-22.2** (watchdog memverifikasi status run GitHub, timestamp ISO UTC,
+  Resume diblokir saat run masih aktif, auto-heal false-failed).
 - Matrix workflow **diubah ke 1 kunci** (`idx`) + `name` eksplisit karena error GitHub
   "Unable to create a unique name" pada matrix multi-kunci. Merge tahan tanpa artifact.
 - Scraper: target gagal **dilewati** (dicatat di `failed_json`); abort hanya bila 8 gagal berturut-turut.

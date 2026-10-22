@@ -5,9 +5,15 @@ import random
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 _LOCK = threading.RLock()
+
+
+def _now_iso():
+    """Timestamp UTC dengan offset eksplisit (aman lintas timezone)."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _cell(value):
@@ -132,7 +138,7 @@ def update_job(job_id, fields):
     if row is None:
         return False
     fields = dict(fields)
-    fields.setdefault("updated_at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    fields.setdefault("updated_at", _now_iso())
     data = []
     for key, value in fields.items():
         if key in COL_INDEX:
@@ -201,7 +207,7 @@ def upsert_chunk(job_id, idx, fields):
     fields = dict(fields)
     fields["job_id"] = job_id
     fields["idx"] = idx
-    fields["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    fields["updated_at"] = _now_iso()
 
     if row is None:
         values = [[_cell(fields.get(header, "")) for header in JOB_CHUNK_HEADERS]]
