@@ -1537,6 +1537,9 @@ def main(
 
                 if not grid_succeeded:
                     stats["failed_targets"] += 1
+                    failed_list = stats.setdefault("failed_targets_list", [])
+                    if len(failed_list) < 500:
+                        failed_list.append(admin)
                     consecutive_failures += 1
                     logger.warning(
                         f"Target dilewati setelah {retries} percobaan gagal "
@@ -1862,8 +1865,10 @@ def run_job(spec_path, progress_callback=None, data_callback=None, target_filter
         start_idx = max(0, int(start or 0))
         end_idx = int(end) if end is not None else None
         targets = targets[start_idx:end_idx]
+    targets_planned = len(targets)
     if target_filter is not None:
         targets = target_filter(targets)
+    targets_skipped = targets_planned - len(targets)
     if not targets:
         raise ValueError("Spec tidak menghasilkan target.")
 
@@ -1926,6 +1931,8 @@ def run_job(spec_path, progress_callback=None, data_callback=None, target_filter
         "brand": brand,
         "level": spec.get("level", ""),
         "targets": len(targets),
+        "targets_planned": targets_planned,
+        "targets_skipped": targets_skipped,
         "output": save_filename,
         "records": len(data),
     }

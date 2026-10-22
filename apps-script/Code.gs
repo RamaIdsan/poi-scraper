@@ -10,13 +10,17 @@ var JOB_HEADERS = [
   "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error",
   "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url",
   "current_chunk", "total_chunks", "overall_progress", "chunks_json", "filter_stats_json",
-  "run_id", "control", "checkpoint_json", "cancelled_at", "zero_targets_json"
+  "run_id", "control", "checkpoint_json", "cancelled_at", "zero_targets_json", "updated_at"
+];
+var JOB_CHUNK_HEADERS = [
+  "job_id", "idx", "label", "status", "planned", "done",
+  "failed_json", "stats_json", "updated_at"
 ];
 var USER_HEADERS = [
   "email", "api_key_hash", "quota", "used", "active", "created_at", "api_key"
 ];
 var LOG_HEADERS = ["timestamp", "job_id", "user", "message"];
-var APP_VERSION = "2026-10-09.2";
+var APP_VERSION = "2026-10-22.1";
 
 // ------------------------------------------------------------
 // Properties & Sheet helpers
@@ -59,6 +63,49 @@ function readTable_(name, headers) {
     });
     return o;
   });
+}
+
+// ------------------------------------------------------------
+// JobChunks: status tiap chunk (satu baris per chunk, bebas race)
+// ------------------------------------------------------------
+function jobChunks_(jobId) {
+  var sh = sheet_().getSheetByName("JobChunks");
+  if (!sh) return [];
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var head = values[0].map(function (h) { return String(h).trim(); });
+  var out = [];
+  for (var i = 1; i < values.length; i++) {
+    var r = values[i];
+    if (!r.length || String(r[0]) !== String(jobId)) continue;
+    var o = {};
+    head.forEach(function (h, j) { o[h] = (j < r.length ? r[j] : ""); });
+    out.push(o);
+  }
+  return out;
+}
+
+function chunksJson_(jobId) {
+  var rows = jobChunks_(jobId);
+  if (!rows.length) return "";
+  var data = {};
+  rows.forEach(function (c) {
+    var stats = {};
+    try { stats = JSON.parse(c.stats_json || "{}") || {}; } catch (e) { stats = {}; }
+    data[String(c.idx)] = {
+      label: c.label || "", status: c.status || "",
+      records: Number(c.done || 0), stats: stats
+    };
+  });
+  return JSON.stringify(data);
+}
+
+function chunkDoneLabels_(jobId) {
+  var out = [];
+  jobChunks_(jobId).forEach(function (c) {
+    if (String(c.status || "").toLowerCase() === "done" && c.label) out.push(c.label);
+  });
+  return out;
 }
 
 function sanitizeJob_(job) {
@@ -242,7 +289,21 @@ function makeResultTab_(brand, jobId) {
 function getJob_(jobId) {
   var jobs = readTable_("Jobs", JOB_HEADERS);
   for (var i = 0; i < jobs.length; i++) {
-    if (String(jobs[i].job_id) === String(jobId)) return sanitizeJob_(jobs[i]);
+    if (String(jobs[i].job_id) === String(jobId)) {
+      var job = sanitizeJob_(jobs[i]);
+      var synthesized = chunksJson_(job.job_id);
+      if (synthesized) {
+        // Gabungkan status legacy (chunks_json) dengan status baru (JobChunks).
+        var merged = {};
+        try { merged = JSON.parse(job.chunks_json || "{}") || {}; } catch (e) { merged = {}; }
+        try {
+          var extra = JSON.parse(synthesized) || {};
+          Object.keys(extra).forEach(function (k) { merged[k] = extra[k]; });
+        } catch (e) { /* abaikan */ }
+        job.chunks_json = JSON.stringify(merged);
+      }
+      return job;
+    }
   }
   return null;
 }
@@ -345,12 +406,15 @@ function jobControl_(user, payload, action) {
       throw new Error("Hanya job paused/cancelled/failed yang bisa dilanjutkan.");
     }
     var spec = JSON.parse(job.spec_json);
+    var done = chunkDoneLabels_(job.job_id);
+    // Gabungkan juga label legacy dari chunks_json (job yang dimulai sebelum JobChunks).
     var chunks = {};
     try { chunks = JSON.parse(job.chunks_json || "{}") || {}; } catch (e) { chunks = {}; }
-    var done = [];
     Object.keys(chunks).forEach(function (k) {
       var cs = String((chunks[k] || {}).status || "").toLowerCase();
-      if (cs === "done" && chunks[k].label) done.push(chunks[k].label);
+      if (cs === "done" && chunks[k].label && done.indexOf(chunks[k].label) < 0) {
+        done.push(chunks[k].label);
+      }
     });
     if (done.length) spec.resume_done_chunks = done;
     setJobField_(job.job_id, "control", "run");
@@ -410,13 +474,15 @@ function previewJob_(user, payload) {
   var sh = sheet_().getSheetByName(tabName);
   if (!sh) throw new Error("Tab hasil tidak ada: " + tabName);
   var limit = Math.max(1, Math.min(500, Number(payload.limit || 10)));
-  var values = sh.getDataRange().getValues();
-  if (!values.length) return { headers: [], rows: [], total: 0 };
+  var lastRow = sh.getLastRow();
+  var lastCol = Math.max(1, sh.getLastColumn());
+  if (!lastRow) return { headers: [], rows: [], total: 0 };
+  var values = sh.getRange(1, 1, Math.min(lastRow, limit + 1), lastCol).getValues();
   var headers = values[0].map(function (h) { return fmtVal_(h); });
   var rows = values.slice(1, 1 + limit).map(function (r) {
     return headers.map(function (_, i) { return fmtVal_(r[i]); });
   });
-  return { headers: headers, rows: rows, total: Math.max(0, values.length - 1) };
+  return { headers: headers, rows: rows, total: Math.max(0, lastRow - 1) };
 }
 
 function jobLogs_(user, payload) {
@@ -477,6 +543,30 @@ function dispatch() {
     if (!max || max < 1) max = 1;
 
     var jobs = readTable_("Jobs", JOB_HEADERS);
+
+    // Watchdog: job aktif tanpa update >30 menit → failed, agar slot tidak nyangkut.
+    var nowMs = new Date().getTime();
+    var stuckMs = 30 * 60 * 1000;
+    jobs.forEach(function (j) {
+      var s = String(j.status || "").toLowerCase();
+      if (s !== "running" && s !== "dispatched") return;
+      var ref = String(j.updated_at || "").trim();
+      if (!ref) {
+        // Job lama (worker sebelum fitur updated_at): jangan difailkan.
+        if (s === "running") return;
+        ref = String(j.started_at || j.created_at || "").trim();
+      }
+      var t = ref ? new Date(ref.replace(" ", "T")).getTime() : 0;
+      if (!t || (nowMs - t) > stuckMs) {
+        setJobField_(j.job_id, "status", "failed");
+        setJobField_(j.job_id, "error",
+          "Timeout: tidak ada update selama >30 menit. Klik Resume untuk melanjutkan.");
+        setJobField_(j.job_id, "updated_at", nowStr_());
+        log_(j.job_id, j.user, "watchdog: job ditandai failed (stuck >30 menit)");
+        j.status = "failed";
+      }
+    });
+
     var active = jobs.filter(function (j) {
       var s = String(j.status).toLowerCase();
       return s === "running" || s === "dispatched";
@@ -493,6 +583,7 @@ function dispatch() {
         var spec = JSON.parse(job.spec_json);
         triggerWorkflow_(spec, job.job_id);
         setJobField_(job.job_id, "status", "dispatched");
+        setJobField_(job.job_id, "updated_at", nowStr_());
       } catch (e) {
         log_(job.job_id, job.user, "dispatch gagal: " + e);
       }
@@ -778,9 +869,11 @@ function setup() {
   tab_("Users", USER_HEADERS);
   tab_("Jobs", JOB_HEADERS);
   tab_("Logs", LOG_HEADERS);
+  tab_("JobChunks", JOB_CHUNK_HEADERS);
   syncHeaders_("Users", USER_HEADERS);
   syncHeaders_("Jobs", JOB_HEADERS);
   syncHeaders_("Logs", LOG_HEADERS);
+  syncHeaders_("JobChunks", JOB_CHUNK_HEADERS);
   var p = PropertiesService.getScriptProperties();
   var defaults = {
     GITHUB_OWNER: "RamaIdsan",
@@ -789,7 +882,7 @@ function setup() {
     INDEX_BASE: "https://raw.githubusercontent.com/RamaIdsan/poi-scraper/main/admin",
     ADMIN_EMAILS: "ramaidsan9995@gmail.com",
     DEFAULT_QUOTA: "0",
-    MAX_PARALLEL: "3"
+    MAX_PARALLEL: "5"
   };
   Object.keys(defaults).forEach(function (k) {
     if (!p.getProperty(k)) p.setProperty(k, defaults[k]);
@@ -865,26 +958,34 @@ function exportJobCsv(jobId) {
   throw new Error("Job tidak ditemukan: " + jobId);
 }
 
+function csvRow_(row) {
+  return row.map(function (cell) {
+    var s;
+    if (cell instanceof Date) {
+      s = Utilities.formatDate(cell, "Asia/Jakarta", "yyyy-MM-dd HH:mm:ss");
+    } else {
+      s = cell === null || cell === undefined ? "" : String(cell);
+    }
+    if (s.indexOf('"') >= 0) s = s.replace(/"/g, '""');
+    if (s.indexOf(",") >= 0 || s.indexOf('"') >= 0 || s.indexOf("\n") >= 0) s = '"' + s + '"';
+    return s;
+  }).join(",");
+}
+
 function exportSheetToDrive_(tabName, brand, jobId, folderId, userEmail) {
   var ss = sheet_();
   var sh = ss.getSheetByName(tabName);
   if (!sh) throw new Error("Tab hasil tidak ada: " + tabName);
-  var values = sh.getDataRange().getValues();
-  if (!values.length) values = [[""]];
+  var lastRow = Math.max(1, sh.getLastRow());
+  var lastCol = Math.max(1, sh.getLastColumn());
 
-  var lines = values.map(function (row) {
-    return row.map(function (cell) {
-      var s;
-      if (cell instanceof Date) {
-        s = Utilities.formatDate(cell, "Asia/Jakarta", "yyyy-MM-dd HH:mm:ss");
-      } else {
-        s = cell === null || cell === undefined ? "" : String(cell);
-      }
-      if (s.indexOf('"') >= 0) s = s.replace(/"/g, '""');
-      if (s.indexOf(",") >= 0 || s.indexOf('"') >= 0 || s.indexOf("\n") >= 0) s = '"' + s + '"';
-      return s;
-    }).join(",");
-  });
+  var lines = [];
+  var CHUNK_ROWS = 2000;
+  for (var start = 1; start <= lastRow; start += CHUNK_ROWS) {
+    var count = Math.min(CHUNK_ROWS, lastRow - start + 1);
+    var values = sh.getRange(start, 1, count, lastCol).getValues();
+    values.forEach(function (row) { lines.push(csvRow_(row)); });
+  }
   var csv = "\ufeff" + lines.join("\r\n");
 
   var safe = String(brand || "result").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "result";

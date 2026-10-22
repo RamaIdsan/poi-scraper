@@ -1,4 +1,4 @@
-"""Gabungkan CSV hasil tiap chunk, dedup, tulis ke tab hasil, upload Drive."""
+"""Gabungkan CSV hasil tiap chunk, dedup, audit cakupan, tulis ke tab hasil, upload Drive."""
 import argparse
 import copy
 import glob
@@ -21,6 +21,22 @@ DEDUP_KEYS = [
 ]
 
 
+def parse_env_list(name):
+    try:
+        value = json.loads(os.environ.get(name) or "[]")
+    except Exception:  # noqa: BLE001
+        return []
+    return value if isinstance(value, list) else []
+
+
+def parse_json(value, fallback):
+    try:
+        parsed = json.loads(value or "")
+    except Exception:  # noqa: BLE001
+        return fallback
+    return parsed if isinstance(parsed, type(fallback)) else fallback
+
+
 def entry_targets(spec, profile, admin_df, entry):
     """Hitung daftar target (admin) untuk satu entry plan."""
     if not entry or entry.get("chunk") == "__SKIP__":
@@ -39,12 +55,85 @@ def entry_targets(spec, profile, admin_df, entry):
     return {t["admin"] for t in targets}
 
 
-def parse_env_list(name):
-    try:
-        value = json.loads(os.environ.get(name) or "[]")
-    except Exception:  # noqa: BLE001
-        return []
-    return value if isinstance(value, list) else []
+def best_record_dedup(full):
+    """Dedup Place_ID dengan memilih baris terlengkap + mengisi kolom kosong dari duplikat."""
+    if full.empty:
+        return full
+    full = full.copy()
+    full["Place_ID"] = full["Place_ID"].astype(str).str.strip()
+    pid = full["Place_ID"]
+    has_pid = pid != ""
+    part = full[has_pid].copy()
+    rest = full[~has_pid].copy()
+
+    if not part.empty:
+        part = part.replace("", pd.NA)
+        score_cols = [c for c in s.OUTPUT_COLUMNS if c != "Place_ID"]
+        part["_score"] = part[score_cols].notna().sum(axis=1)
+        part["_order"] = range(len(part))
+        part = part.sort_values(["_score", "_order"], ascending=[False, True], kind="stable")
+        part = part.drop(columns=["_order"])
+        merged = part.groupby("Place_ID", as_index=False, sort=False).first()
+        merged = merged.drop(columns=["_score"], errors="ignore").fillna("")
+        rest = rest.fillna("")
+        full = pd.concat([merged, rest], ignore_index=True)
+
+    full = full.reindex(columns=s.OUTPUT_COLUMNS).fillna("")
+
+    keys = [c for c in DEDUP_KEYS if c in full.columns]
+    if keys:
+        full = full.drop_duplicates(subset=keys)
+
+    names = full["Name_geocode"].astype(str).str.strip().str.lower()
+    lat = pd.to_numeric(full["Latitude_geocode"], errors="coerce")
+    lon = pd.to_numeric(full["Longitude_geocode"], errors="coerce")
+    valid = lat.notna() & lon.notna() & (names != "")
+    if valid.any():
+        sub = full[valid].copy()
+        sub["_coord_key"] = (
+            names[valid] + "|" + lat[valid].round(4).astype(str) + "|" + lon[valid].round(4).astype(str)
+        )
+        sub = sub.drop_duplicates(subset=["_coord_key"]).drop(columns=["_coord_key"])
+        full = pd.concat([full[~valid], sub], ignore_index=True)
+
+    return full.reindex(columns=s.OUTPUT_COLUMNS).fillna("")
+
+
+def audit_coverage(chunks, entries, spec, profile, admin_df):
+    """Periksa cakupan berdasarkan status chunk (bukan baris hasil)."""
+    missing = []
+    missing_all = []
+    expected_total = 0
+    done_total = 0
+    for entry in entries:
+        if not entry or entry.get("chunk") == "__SKIP__":
+            continue
+        planned = len(entry_targets(spec, profile, admin_df, entry))
+        expected_total += planned
+        try:
+            idx = int(entry.get("idx"))
+        except (TypeError, ValueError):
+            idx = -1
+        record = chunks.get(idx)
+        label = entry.get("chunk") or entry.get("prov") or f"chunk {idx}"
+        if record is None:
+            missing.append(f"{label}: belum berjalan")
+            continue
+        try:
+            done_total += min(planned, int(float(str(record.get("done", 0)) or 0)))
+        except (TypeError, ValueError):
+            pass
+        status = str(record.get("status", "")).strip().lower()
+        if status == "done":
+            continue
+        if status == "partial":
+            failed = parse_json(record.get("failed_json"), [])
+            if failed:
+                missing.extend(str(name) for name in failed if str(name).strip())
+            continue
+        missing.append(f"{label}: {status or 'tanpa status'}")
+    missing_all = list(missing)
+    return expected_total, done_total, missing, missing_all
 
 
 def main():
@@ -59,6 +148,11 @@ def main():
     job_id = spec.get("job_id", "")
     user = spec.get("user", "")
     result_sheet = spec.get("result_sheet", "") or f"Result_{job_id}"
+
+    try:
+        cloud.update_job(job_id, {})
+    except Exception:  # noqa: BLE001
+        pass
 
     if args.plan_result != "success":
         cloud.update_job(job_id, {
@@ -106,53 +200,35 @@ def main():
     full = full.reindex(columns=s.OUTPUT_COLUMNS).fillna("")
     before = len(full)
 
-    # 1) Dedup berdasarkan Place_ID (bila ada) agar duplikat lintas-chunk pasti hilang.
-    if "Place_ID" in full.columns:
-        pid = full["Place_ID"].astype(str).str.strip()
-        has_pid = pid != ""
-        by_pid = full[has_pid].drop_duplicates(subset=["Place_ID"])
-        rest = full[~has_pid]
-        full = pd.concat([by_pid, rest], ignore_index=True)
+    full = best_record_dedup(full)
 
-    # 2) Dedup fallback berdasarkan brand/nama/alamat/koordinat.
-    keys = [c for c in DEDUP_KEYS if c in full.columns]
-    full = full.drop_duplicates(subset=keys) if keys else full.drop_duplicates()
-
-    # 3) Audit cakupan target: bandingkan target yang direncanakan vs yang ada di hasil.
+    # Audit cakupan: berbasis status chunk (JobChunks), bukan keberadaan baris hasil
+    # (dedup Place_ID bisa menghapus baris milik target lain yang menemukan toko sama).
     coverage_line = ""
-    missing_todo = set()
+    missing_todo = []
     all_entries = parse_env_list("ALL_ENTRIES")
     todo_entries = parse_env_list("PLAN_ENTRIES") or all_entries
     if all_entries:
         try:
             profile = s.get_profile(spec.get("country", "indonesia"))
             admin_df = s.load_admin_data(profile)
-            expected_all = set()
-            for entry in all_entries:
-                expected_all |= entry_targets(spec, profile, admin_df, entry)
-            expected_todo = set()
-            for entry in todo_entries:
-                expected_todo |= entry_targets(spec, profile, admin_df, entry)
-            present = {
-                str(v).strip() for v in full.get("Query_Target", pd.Series(dtype=str))
-                if str(v).strip()
-            }
-            zeros = set()
-            try:
-                zeros = set(json.loads(cloud.get_job_field(job_id, "zero_targets_json") or "[]") or [])
-            except Exception:  # noqa: BLE001
-                zeros = set()
-            verified = present | {str(z).strip() for z in zeros if str(z).strip()}
-            missing_all = expected_all - verified
-            missing_todo = expected_todo - verified
-            total_expected = len(expected_all)
-            covered = total_expected - len(missing_all)
-            coverage_line = f"cakupan target: {covered}/{total_expected}"
-            if missing_all:
-                sample = ", ".join(sorted(missing_all)[:10])
-                coverage_line += f" · belum terverifikasi {len(missing_all)} (mis. {sample})"
-            cloud.append_log(job_id, user, "audit " + coverage_line)
-            print("AUDIT " + coverage_line, flush=True)
+            chunks = cloud.fetch_job_chunks(job_id)
+            if chunks:
+                expected, covered, missing_todo, missing_all = audit_coverage(
+                    chunks, todo_entries, spec, profile, admin_df
+                )
+                coverage_line = f"cakupan chunk: {covered}/{expected} target"
+                if missing_all:
+                    sample = ", ".join(sorted(set(missing_all))[:10])
+                    coverage_line += f" · belum terverifikasi {len(set(missing_all))} (mis. {sample})"
+                cloud.append_log(job_id, user, "audit " + coverage_line)
+                print("AUDIT " + coverage_line, flush=True)
+            else:
+                cloud.append_log(
+                    job_id, user,
+                    "audit: data chunk belum tersedia (job lama) — cakupan tidak difailkan",
+                )
+                print("AUDIT legacy: JobChunks kosong, audit informatif saja", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"WARN audit cakupan gagal: {exc}")
 
@@ -161,6 +237,11 @@ def main():
         cloud.overwrite_tab(result_sheet, list(s.OUTPUT_COLUMNS), rows)
     except Exception as exc:  # noqa: BLE001
         print(f"WARN overwrite_tab gagal: {exc}")
+
+    try:
+        cloud.update_job(job_id, {})
+    except Exception:  # noqa: BLE001
+        pass
 
     out_path = f"Output_final_{job_id or 'result'}.csv"
     full.to_csv(out_path, index=False, encoding="utf-8-sig")
@@ -171,8 +252,7 @@ def main():
             out_path, name=out_path, share_email=os.environ.get("SHARE_EMAIL")
         )
     except Exception as exc:  # noqa: BLE001
-        # Tidak fatal: Apps Script (akun pemilik) akan mengekspor CSV dari tab hasil
-        # via exportCompleted(), karena service account tidak punya kuota Drive.
+        # Tidak fatal: Apps Script (akun pemilik) akan mengekspor CSV dari tab hasil.
         print(f"WARN upload Drive gagal (akan diekspor oleh Apps Script): {exc}")
 
     progress_text = f"100% ({len(full)} records)"
@@ -186,15 +266,16 @@ def main():
         "output_file_id": file_id,
         "output_url": link,
         "result_sheet": result_sheet,
+        "records": len(full),
     }
-    if status == "done" and missing_todo:
-        # Ada target dari chunk yang dijalankan dispatch ini yang belum terverifikasi
-        # (gagal/terhenti). Tandai failed agar tombol Resume bisa mengejarnya.
+    unique_missing = sorted(set(missing_todo))
+    if status == "done" and unique_missing:
         status = "failed"
         fields["status"] = status
         fields["error"] = (
-            f"Audit cakupan: {len(missing_todo)} target belum terverifikasi dari chunk yang "
-            "dijalankan. Klik Resume untuk melanjutkan — data tetap tersimpan di tab hasil ini."
+            f"Audit cakupan: {len(unique_missing)} target/chunk belum terverifikasi "
+            f"(mis. {', '.join(unique_missing[:5])}). Klik Resume untuk melanjutkan — "
+            "data tetap tersimpan di tab hasil ini."
         )
     if status == "failed":
         # Jangan menimpa pesan error spesifik dari worker bila sudah ada.

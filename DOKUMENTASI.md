@@ -181,7 +181,10 @@ semakin besar risiko rate-limit Google.
 | `dispatched` | Sedang dikirim ke worker GitHub |
 | `running` | Sedang scraping |
 | `done` | Selesai; hasil tersedia |
-| `failed` | Gagal; lihat tooltip **err** |
+| `failed` | Gagal; lihat tooltip **err**. Klik **Resume** — job melanjutkan dari target terakhir, bukan dari awal |
+
+Status per chunk (tab **`JobChunks`**): `running`, `done`, `partial` (ada target gagal →
+diotomatiskan ulang saat Resume), `paused`, `cancelled`, `failed`.
 
 Kolom di tabel **Job Saya**:
 
@@ -353,24 +356,31 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
      + `all_entries` untuk audit cakupan.
    - Matrix workflow memakai **satu kunci** (`idx`) dengan nama job eksplisit
      (`scrape #<idx>`) — menghindari error GitHub "Unable to create a unique name".
-     Beberapa chunk berjalan **paralel (maks 3)**.
+     Beberapa chunk berjalan **paralel** (jumlahnya dari Repository Variable
+     `MAX_CHUNK_PARALLEL`, default 2).
    - Untuk tiap chunk: `run_job.py` menjalankan scraper, **streaming** baris ke tab
      hasil, menulis `progress/current_target/listings_found/records/eta/run_url` dan `Logs`.
-     Semua penulisan Sheets dilakukan lewat **thread latar (non-blocking)** agar proses
-     scraping tidak menunggu jaringan (hemat ±2–7% waktu).
-   - **Resume per-target**: saat chunk mulai, kolom `Query_Target` tab hasil dibaca — target
-     yang barisnya sudah ada **dilewati**, target terakhir yang sedang dikerjakan **diulang**
-     (aman bila proses terhenti di tengah target), dan semua target yang belum punya baris
-     dicoba lagi. Chunk yang punya target gagal ditandai `partial` sehingga ikut diulang saat Resume.
+     Semua penulisan Sheets dilakukan lewat **thread latar (non-blocking, dengan retry 429)**
+     agar proses scraping tidak menunggu jaringan.
+   - **Status chunk** disimpan di tab **`JobChunks`** (satu baris per chunk). Ini menggantikan
+     `chunks_json` yang rawan saling menimpa saat chunk paralel, sehingga Resume tidak
+     mengulang chunk yang sudah selesai.
+   - **Resume per-target**: saat chunk mulai, kolom `Query_Target` tab hasil dibaca (dengan
+     normalisasi nama `Kabupaten/Kota`, `Adm.`, `Kep.`) — target yang barisnya sudah ada
+     **dilewati**, target terakhir yang sedang dikerjakan **diulang** (aman bila proses
+     terhenti di tengah target), dan semua target yang belum punya baris dicoba lagi.
+     Chunk dengan target gagal ditandai `partial` (daftar targetnya disimpan) → hanya target
+     itu yang diulang saat Resume.
    - **Ketahanan target**: satu target yang gagal setelah beberapa percobaan **dilewati**
-     (dicatat di `failed_targets`), chunk tetap lanjut. Chunk dihentikan hanya bila
+     (dicatat di `failed_json`), chunk tetap lanjut. Chunk dihentikan hanya bila
      **8 target gagal berturut-turut** (indikasi blokir/limit) → status `failed` dengan
      pesan jelas + checkpoint (bisa di-Resume).
-   - `merge_parts.py` menggabungkan semua chunk + baris tab, dedup, menulis ulang tab,
-     upload CSV Drive, lalu **audit cakupan**: target yang direncanakan vs yang ada di hasil
-     (target 0-hasil dikecualikan). Bila ada target dari chunk yang dijalankan belum
-     terverifikasi → `status=failed` + pesan agar klik **Resume** (data tetap di tab yang sama).
-     Bila `plan` gagal atau tidak ada artifact, merge tetap jalan dan menuliskan **alasan** ke kolom `error`.
+   - `merge_parts.py` menggabungkan semua chunk + baris tab, **dedup best-record**
+     (per `Place_ID` dipilih baris terlengkap dan kolom kosong diisi dari duplikatnya),
+     menulis ulang tab, upload CSV Drive, lalu **audit cakupan berbasis `JobChunks`**
+     (planned vs done vs daftar gagal). Target yang belum terverifikasi → `status=failed`
+     + pesan agar klik **Resume** (data tetap di tab yang sama). Job lama tanpa data chunk
+     diaudit secara informatif saja (tidak digagalkan).
 4. Dashboard memantau lewat kolom-kolom tersebut.
 
 **Judul job** diberi nama `Result_<brand>_<YYYYMMDD_HHMM>_<job8>` agar mudah dikenali.
@@ -394,7 +404,9 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 | **`output_url` kosong / CSV tidak ada** | Penyebab umum: **service account tidak punya kuota Drive pribadi**. Solusi: CSV diekspor oleh **Apps Script** (akun Anda). Set `DRIVE_FOLDER_ID` (Script Property / `setDriveFolder(id)`) dan pastikan trigger `exportCompleted` aktif (`setupTriggers()`), atau jalankan `exportCompleted()` manual. Tombol **csv** di dashboard juga bisa mengunduh langsung dari tab hasil (export URL) sebelum file Drive siap. |
 | **Progress format lama `x% (n records) \| a/b`** | Worker di GitHub masih versi lama → `git push origin main` lalu jalankan job baru. |
 | **Job kena "maximum execution time of 5h50m"** | Terjadi pada alur lama (1 chunk = 1 provinsi besar). Sudah diperbaiki: chunk dipecah ±80 target. Push repo terbaru, lalu **Resume** job — target yang sudah masuk tab dilewati otomatis. |
-| **Job `failed` dengan pesan "Audit cakupan: N target belum terverifikasi"** | Sebagian target dari chunk yang dijalankan belum punya baris (gagal/terhenti). Klik **Resume**; hanya target tersebut yang dikerjakan, hasil tetap di tab yang sama. |
+| **Job `failed` dengan pesan "Audit cakupan: N target belum terverifikasi"** | Sebagian target dari chunk yang dijalankan belum terverifikasi (gagal/terhenti). Klik **Resume**; hanya target tersebut yang dikerjakan, hasil tetap di tab yang sama. |
+| **Resume mengulang dari awal** | Sudah diperbaiki: status chunk di tab `JobChunks` + matching target ternormalisasi. Pastikan repo & `Code.gs` sudah versi terbaru, lalu jalankan `setup()`. |
+| **Job berhenti sendiri / `failed` setelah 30 menit tanpa update** | Watchdog `dispatch()` menandai job stuck. Klik **Resume**; target yang sudah masuk tab dilewati. |
 | **Perubahan kode tidak muncul** | Redeploy: **Deploy → Manage deployments → Edit → New version**. |
 
 ---
@@ -403,15 +415,29 @@ Respon sukses: `{"ok":true,"data":{...}}` · gagal: `{"ok":false,"error":"..."}`
 
 - GitHub Actions: maksimum **6 jam/job**; scope besar otomatis dipecah per provinsi **dan
   per batch ±80 target** (batas ±200 chunk per run). Job yang terhenti bisa di-**Resume** —
-  target yang sudah masuk tab hasil dilewati otomatis, hasil tetap di tab/CSV yang sama.
-- Google Sheets: **10 juta sel/spreadsheet**.
+  target yang sudah masuk tab hasil dilewati otomatis (termasuk job lama), hasil tetap di
+  tab/CSV yang sama. Watchdog menandai job `failed` bila tidak ada update >30 menit.
+- **Kapasitas paralel** (setelah optimasi):
+  | Preset | MAX_PARALLEL | MAX_CHUNK_PARALLEL | Chunk aktif |
+  |---|---|---|---|
+  | Stabil | 3 | 3 | 9 |
+  | **Maksimal aman (default baru)** | **5** | **2** | **10** |
+  | 10 job (antre) | 10 | 1 | 10 |
+  | Tidak disarankan | 10 | 3 | 30 |
+  Batas keras: runner GitHub Free **20 job** (akun), Sheets API **60 read + 60 write/menit
+  per service account**, spreadsheet **10 juta sel** (≈500 rb baris hasil @20 kolom).
+  10 job bersamaan bisa, tetapi antrean runner dan kuota Sheets membuatnya lebih lambat
+  dan menaikkan risiko blokir Google — bukan "tanpa risiko".
+- Google Sheets: **10 juta sel/spreadsheet** — arsipkan/hapus tab hasil lama berkala.
 - IP GitHub (Azure) lebih mudah diblokir Google → hasil bersifat **best-effort**.
-- Streaming memunculkan duplikat sementara; dibersihkan saat selesai.
+- Streaming memunculkan duplikat sementara; dedup final dilakukan saat merge
+  (`Place_ID` best-record + fallback koordinat).
 - **Jam operasional**: kosong = sel kosong; `{"24h":true}` = buka 24 jam;
   `{"closed":true}` = tutup sementara/permanen.
 - **Listing tanpa koordinat** tetap diambil (lat/long kosong sebagai penanda) —
   default `keep_no_coords=true`.
-- Paralel 3 (default) menaikkan peluang rate-limit; bisa diturunkan via `setMaxParallel(n)`.
+- `MAX_PARALLEL` diatur via `setMaxParallel(n)`; `MAX_CHUNK_PARALLEL` via Repository
+  Variable GitHub Actions.
 - Public repo: menit Actions gratis; kode + CSV admin publik.
 - Nama wilayah Indonesia sudah dibakukan (`Kabupaten X`/`Kota X`, DKI `Kota Administrasi …`).
   Beberapa kabupaten hasil pemekaran provinsi tampil di dua provinsi (Sorong, Deiyai, Nabire,

@@ -108,11 +108,14 @@ Simpan token (dipakai di Script Properties `GITHUB_PAT`).
    - (opsional) `GITHUB_OWNER=RamaIdsan`, `GITHUB_REPO=poi-scraper`, `GITHUB_REF=main`, `INDEX_BASE`, `ADMIN_EMAILS`, `DEFAULT_QUOTA`, `MAX_PARALLEL`, `OAUTH_CLIENT_ID`
    > `setup()` akan mengisi nilai default bila kosong.
    > CSV diekspor oleh Apps Script (`exportCompleted`, trigger tiap 5 menit) karena service account tidak punya kuota Drive pribadi.
-5. Jalankan fungsi `setup()` lalu `setupTriggers()` (izinkan akses saat diminta).
-6. Deploy → New deployment → Web app:
+5. Jalankan fungsi `setup()` lalu `setupTriggers()` (izinkan akses saat diminta), kemudian
+   `setMaxParallel(5)` (kapasitas job) dan `setDriveFolder("id")` bila belum.
+6. GitHub → Settings → Secrets and variables → Actions → **Variables** → tambahkan
+   `MAX_CHUNK_PARALLEL = 2` (chunk paralel per job; naikkan/turunkan sesuai kapasitas).
+7. Deploy → New deployment → Web app:
    - Execute as: **Me**
    - Who has access: **Anyone**
-7. Buka URL Web App.
+8. Buka URL Web App.
 
 ### 7. Bootstrap admin & API key pertama
 Panel Admin hanya muncul setelah login, jadi key pertama harus dibuat dari editor:
@@ -153,8 +156,10 @@ Respon sukses: `{"ok":true,"data":{...}}`; gagal: `{"ok":false,"error":"..."}`.
 
 ## Multi-user, hasil & monitoring
 - **Banyak akun**: admin membuat API key per orang via panel Admin (email + kuota). Tiap user login dengan key sendiri (atau Google bila `OAUTH_CLIENT_ID` diisi).
-- **Paralel**: `MAX_PARALLEL` (default 3) mengatur berapa job jalan bersamaan; sisanya `queued` dan otomatis dipicu. Ubah via `setMaxParallel(n)`.
-- **Hasil**: tiap job punya tab sendiri di spreadsheet: `Result_<brand>_<tanggal>_<job8>`. Selama scraping, hasil **mengalir (streaming)** ke tab; saat selesai dirapikan (dedup) oleh job merge. CSV final juga diunggah ke Drive.
+- **Paralel**: `MAX_PARALLEL` (default 5) mengatur berapa job jalan bersamaan; `MAX_CHUNK_PARALLEL` (Repository Variable, default 2) mengatur chunk paralel per job. Sisanya `queued` dan otomatis dipicu. Ubah job via `setMaxParallel(n)`.
+- **Kapasitas aman**: 5 job × 2 chunk = 10 chunk aktif. Batas GitHub Free 20 job; Sheets API 60 read & 60 write/menit per service account; spreadsheet 10 juta sel.
+- **Hasil**: tiap job punya tab sendiri di spreadsheet: `Result_<brand>_<tanggal>_<job8>`. Selama scraping, hasil **mengalir (streaming)** ke tab; saat selesai dirapikan (dedup best-record) oleh job merge. CSV final juga diunggah ke Drive.
+- **Resume/status chunk**: tab `JobChunks` menyimpan status tiap chunk. Resume melanjutkan dari target terakhir (kolom `Query_Target`), bukan mengulang dari awal; audit cakupan memastikan tidak ada target terlewat.
 - **Progress**: kolom `progress`, `current_target`, `records`, `listings_found`, `eta`, `run_url` di tab `Jobs`; dashboard auto-refresh tiap 10 dtk.
 - **Log**: tab `Logs` mencatat milestone (mulai chunk, selesai, error). Log lengkap ada di GitHub Actions (`run_url` tombol **log**).
 - **Akses**: spreadsheet di-share **Viewer** ke setiap email user (otomatis saat admin membuat key). Artinya semua user bisa melihat semua tab; pembatasan "hanya miliknya" hanya berlaku di tampilan dashboard.
@@ -163,9 +168,11 @@ Respon sukses: `{"ok":true,"data":{...}}`; gagal: `{"ok":false,"error":"..."}`.
 ---
 
 ## Catatan & batasan
-- GitHub Actions maksimum **6 jam/job**; scope besar otomatis dipecah **per provinsi** lalu digabung.
+- GitHub Actions maksimum **6 jam/job**; scope besar otomatis dipecah **per provinsi** lalu **per batch ±80 target** (±200 chunk/run).
 - IP GitHub (Azure) lebih mudah diblokir Google → hasil best-effort (bukan jaminan 100%).
-- Google Sheets dibatasi **10 juta sel/spreadsheet**; hasil sangat besar bisa tertunda/lambat. Drive CSV tetap disediakan.
-- Streaming memunculkan duplikat sementara; dibersihkan saat merge.
+- Google Sheets dibatasi **10 juta sel/spreadsheet** dan **60 read + 60 write/menit per service account**; arsipkan tab lama untuk job besar.
+- Streaming memunculkan duplikat sementara; dibersihkan saat merge (best-record Place_ID + fallback).
 - Public repo: menit Actions gratis; kode + CSV admin publik.
 - Google login opsional; bila `OAUTH_CLIENT_ID` kosong, gunakan API key.
+
+

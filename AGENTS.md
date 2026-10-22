@@ -22,9 +22,9 @@ GitHub Actions: plan → scrape (matrix per provinsi) → merge
 |---|---|
 | `poi_scraper.py` | Engine scraping + job-mode (`run_job`, `spec_to_targets`, `plan_chunks`). Semua filter: relevansi (nama ATAU kategori + alias), radius geo, dedup, jam, phone, dll. |
 | `worker/plan_chunks.py` | Baca spec → output `idxs` + `entries` (chunk per provinsi × batch ±80 target, `{idx,chunk,total,prov,start,end}`) + `all_entries` (untuk audit cakupan). |
-| `worker/run_job.py` | Jalankan 1 chunk (scope provinsi + irisan target): stream ke tab, progress, kontrol pause/stop, writer thread non-blocking, resume per-target (kolom `Query_Target`). |
-| `worker/merge_parts.py` | Gabung artifact + baris tab, dedup (Place_ID → fallback), audit cakupan target, tulis tab final, upload Drive, tandai status. |
-| `worker/cloud.py` | Helper Sheets/Drive (service account), cache row/tab, sanitasi sel, RLock. |
+| `worker/run_job.py` | Jalankan 1 chunk (scope provinsi + irisan target): stream ke tab, progress, kontrol pause/stop, writer thread non-blocking + retry, resume per-target (kolom `Query_Target`, ternormalisasi), status chunk ke `JobChunks`. |
+| `worker/merge_parts.py` | Gabung artifact + baris tab, dedup **best-record** (Place_ID) + fallback, audit cakupan berbasis `JobChunks`, tulis tab final, upload Drive, tandai status. |
+| `worker/cloud.py` | Helper Sheets/Drive (service account), cache row/tab, sanitasi sel, RLock, **retry+backoff 429/5xx**, `JobChunks` upsert, `updated_at`. |
 | `.github/workflows/scrape.yml` | Workflow: plan → scrape (matrix `idx`) → merge. |
 | `apps-script/Code.gs` | API + DB (Users/Jobs/Logs), dispatch, kontrol job, export CSV, notifikasi email. |
 | `apps-script/Index.html` | Dashboard (Tailwind+Lucide), multi-pilih wilayah, preset, modal, mobile tabs. |
@@ -48,11 +48,17 @@ GitHub Actions: plan → scrape (matrix per provinsi) → merge
 - Kontrol: `Jobs.control` = `run|pause|stop`; worker cek tiap ~15 dtk.
 - Untuk job besar: `plan_chunks` bisa mengembalikan (chunks, counts) dengan pecahan `chunk_size=80`.
   Uji: `plan_chunks` Jabar level=kecamatan → 8 chunk; guard matrix ≤200 chunk (GitHub maks 256).
-- Status chunk di `chunks_json`: `running|done|partial|paused|cancelled|failed`. `partial` = ada
-  target gagal → tidak dilewati saat Resume. Resume per-target memakai kolom `Query_Target` (kolom R)
-  tab hasil: target yang ada barisnya dilewati, target terakhir diulang, sisanya dikerjakan.
-- Audit cakupan di merge: `expected` (dari `entries`/`all_entries`) vs `present` + `zero_targets_json`;
-  bila target dari chunk yang dijalankan belum terverifikasi → `status=failed` + pesan agar Resume.
+- Status chunk di tab **`JobChunks`** (satu baris per chunk): `running|done|partial|paused|cancelled|failed`.
+  `partial` = ada target gagal → tidak dilewati saat Resume. **Jangan** kembali memakai `chunks_json`
+  read-modify-write (race antar-chunk paralel). `getJob_` menyusun `chunks_json` dari tab ini untuk UI.
+- Resume per-target memakai kolom `Query_Target` (kolom R) tab hasil dengan **normalisasi**
+  (`Kabupaten/Kota`, `Adm.`→`Administrasi`, `Kep.`→`Kepulauan`): target yang ada barisnya dilewati,
+  target terakhir diulang, sisanya dikerjakan.
+- Audit cakupan di merge **berbasis `JobChunks`** (status + planned/done + failed_json), bukan baris hasil
+  (dedup Place_ID menghapus baris target lain). Job lama tanpa data chunk → audit informatif (tidak failed).
+- `Jobs.updated_at` diisi otomatis oleh `cloud.update_job`; dipakai watchdog dispatch (>30 mnt tanpa update → failed).
+- Kapasitas aman: **MAX_PARALLEL=5** (job) × **MAX_CHUNK_PARALLEL=2** (GitHub repo variable) = 10 chunk aktif.
+  Batas: runner Free 20, Sheets 60 read & 60 write/menit per service account, 10 juta sel/spreadsheet.
 - Nama wilayah Indonesia **wajib berprefix** `Kabupaten `/`Kota ` (mis. `Kabupaten Tangerang`),
   diturunkan dari `Kode Kota/Kab` (segmen kedua ≥ 71 → Kota). `load_admin_data` menormalkan
   otomatis (safety net) dan `admin/fix_admin_names.py` merapikan CSV-nya. `resolve_admin_path`
@@ -71,23 +77,28 @@ GitHub Actions: plan → scrape (matrix per provinsi) → merge
 ## Deploy (setiap perubahan)
 1. `git -C poi-scraper push origin main` (repo **public**, owner `RamaIdsan`).
 2. Apps Script: replace `Code.gs` + `Index.html` → Save.
-3. Jika header `Jobs`/`Users` berubah → jalankan `setup()`.
+3. Jalankan **`setup()`** (sinkron header `Jobs` + buat tab `JobChunks`), lalu `setMaxParallel(5)`,
+   `setDriveFolder(id)` dan pastikan trigger `setupTriggers()` aktif.
 4. **Deploy → Manage deployments → Edit → Version: New version**.
 5. Hard refresh dashboard; cek versi di header (`· vYYYY-MM-DD.x`).
+6. GitHub → Settings → Secrets and variables → Actions → **Variables** → `MAX_CHUNK_PARALLEL = 2`.
 Catatan: perubahan **worker/workflow saja** (bukan header/`Code.gs`) cukup langkah 1 (push).
 
 ## Status saat ini
-- Versi aplikasi terakhir: **v2026-10-09.2** (mobile viewport + force-mobile + notifikasi toast).
+- Versi aplikasi terakhir: **v2026-10-22.1** (JobChunks, resume anti-ulang, audit chunk, retry 429,
+  watchdog, dedup best-record, throttle kapasitas 5×2).
 - Matrix workflow **diubah ke 1 kunci** (`idx`) + `name` eksplisit karena error GitHub
   "Unable to create a unique name" pada matrix multi-kunci. Merge tahan tanpa artifact.
-- Scraper: target gagal **dilewati** (bukan abort); abort hanya bila 8 gagal berturut-turut.
+- Scraper: target gagal **dilewati** (dicatat di `failed_json`); abort hanya bila 8 gagal berturut-turut.
 - Notifikasi browser tidak mungkin di sandbox Apps Script → pakai toast (+ email opsional via `exportCompleted`).
 - **Anti-timeout (fix Jabar/Jateng 5j50m)**: chunk = per provinsi × batch **±80 target**
-  (`chunk_label` unik), `max-parallel: 3`, `timeout-minutes: 360`, guard matrix ≤200 chunk,
-  actions di-bump ke node24 (`checkout@v7`, `setup-python@v7`, `upload/download-artifact@v7`,
-  `cache@v6`) + cache pip & browser Playwright. Resume per-target via kolom `Query_Target`
-  + audit cakupan di merge (target belum terverifikasi → `failed` + ajakan Resume).
-  Uji: Jabar kecamatan 627 target → 8 chunk; slice gabungan == 627 target (verified).
+  (`chunk_label` unik), `max-parallel` dari variabel repo (default 2), `timeout-minutes: 360`,
+  guard matrix ≤200 chunk, actions node24 + cache pip & browser Playwright.
+- **Resume benar-benar melanjutkan**: `JobChunks` (tanpa race), matching target ternormalisasi
+  (job lama tetap dikenali), baca kolom R dengan retry; status `partial` memicu retry target gagal.
+- **Audit cakupan** berbasis chunk; legacy tanpa chunk → informatif. `records` di-set ke jumlah unik.
+- **Dedup**: pilih baris terlengkap per `Place_ID` + isi kolom kosong dari duplikat; fallback
+  `Brand+Name+Address+Lat+Lon` dan `Name+lat/lon (4 desimal)`.
 - **Nama wilayah Indonesia dibakukan**: 78.200 baris kabupaten berprefix `Kabupaten `, DKI
   diperluas (`Kota Administrasi …`, `Kabupaten Administrasi Kepulauan Seribu`), 1 baris kode
   rusak `52.0452.07` dibuang, 24 kode lossy (`.1/.2` → `.10/.20`) dirapikan, 3 varian kecamatan
@@ -96,12 +107,16 @@ Catatan: perubahan **worker/workflow saja** (bukan header/`Code.gs`) cukup langk
 
 ## Known issues / backlog
 - Kelengkapan Google Maps tetap best-effort (cap ±120/query); IP GitHub bisa diblokir.
-- Sheets 10 juta sel; `previewJob_`/`exportCompleted` membaca seluruh tab (perlu optimasi bila >50k baris).
-- Dedup "first wins" (belum merge-field/record terbaik).
+- Spreadsheet 10 juta sel: ≈500 rb baris hasil @20 kolom. Arsipkan/hapus tab hasil lama berkala.
+- `previewJob_` membaca baris terbatas (sudah); `exportSheetToDrive_` membaca per 2.000 baris
+  (tetap membangun CSV penuh di memori — job ekstrem bisa mendekati limit Apps Script).
+- Dedup: penggabungan field hanya untuk baris dengan `Place_ID` sama; baris tanpa PID memakai
+  fallback `Brand+Name+Address+Lat+Lon` dan `Name+lat/lon`, sehingga variasi ekstrem bisa lolos.
 - Keamanan: spreadsheet di-share Viewer ke user → tab `Users` berisi API key plaintext (P0).
-- Stuck job belum ada heartbeat/timeout otomatis.
+- Watchdog 30 menit: job lama (worker pra-`updated_at`) sengaja tidak difailkan; job baru aman.
 - Scope raksasa (mis. expand seluruh Indonesia = 83.422 target) tetap berat: ±200 chunk ×
   (±4-5 jam di cap guard) — sebaiknya pecah per pulau/provinsi dari dashboard.
+- 10 job bersamaan hanya disarankan dengan `MAX_CHUNK_PARALLEL=1` (antrean runner + kuota Sheets).
 - `jobs.get` mengembalikan baris mentah (sudah disanitasi di `getJob_`).
 
 ## Catatan lintas-session

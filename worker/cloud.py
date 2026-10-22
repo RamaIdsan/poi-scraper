@@ -1,6 +1,8 @@
 """Helper Google Sheets & Drive memakai service account (untuk GitHub Actions)."""
 import json
 import os
+import random
+import re
 import threading
 import time
 from pathlib import Path
@@ -28,10 +30,44 @@ JOB_COLUMNS = [
     "created_at", "started_at", "finished_at", "output_file_id", "output_url", "error",
     "result_sheet", "result_gid", "current_target", "listings_found", "records", "eta", "run_url",
     "current_chunk", "total_chunks", "overall_progress", "chunks_json", "filter_stats_json",
-    "run_id", "control", "checkpoint_json", "cancelled_at", "zero_targets_json",
+    "run_id", "control", "checkpoint_json", "cancelled_at", "zero_targets_json", "updated_at",
 ]
 COL_INDEX = {name: i for i, name in enumerate(JOB_COLUMNS)}
 SHEET_NAME = "Jobs"
+
+JOB_CHUNK_TAB = "JobChunks"
+JOB_CHUNK_HEADERS = [
+    "job_id", "idx", "label", "status", "planned", "done",
+    "failed_json", "stats_json", "updated_at",
+]
+JOB_CHUNK_COL = {name: i for i, name in enumerate(JOB_CHUNK_HEADERS)}
+
+
+def _is_retryable(exc):
+    try:
+        from googleapiclient.errors import HttpError
+
+        if isinstance(exc, HttpError):
+            status = int(getattr(exc.resp, "status", 0) or 0)
+            return status == 429 or 500 <= status < 600
+    except Exception:
+        pass
+    return isinstance(exc, (TimeoutError, OSError))
+
+
+def _retry_call(fn, *args, max_attempts=5, **kwargs):
+    """Retry transien (429/5xx/timeout) dengan exponential backoff + jitter."""
+    delay = 2.0
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            if attempt >= max_attempts or not _is_retryable(exc):
+                raise
+            sleep = min(60.0, delay) + random.uniform(0, delay * 0.3)
+            print(f"WARN retry {attempt}/{max_attempts} setelah {round(sleep, 1)}s: {exc}")
+            time.sleep(sleep)
+            delay *= 2
 
 
 def _creds():
@@ -95,11 +131,13 @@ def update_job(job_id, fields):
     sheets, row = find_job_row(sheet_id, job_id)
     if row is None:
         return False
+    fields = dict(fields)
+    fields.setdefault("updated_at", time.strftime("%Y-%m-%d %H:%M:%S"))
     data = []
     for key, value in fields.items():
         if key in COL_INDEX:
             col = _col_letter(COL_INDEX[key])
-            data.append({"range": f"{SHEET_NAME}!{col}{row}", "values": [[value]]})
+            data.append({"range": f"{SHEET_NAME}!{col}{row}", "values": [[_cell(value)]]})
     if data:
         sheets.spreadsheets().values().batchUpdate(
             spreadsheetId=sheet_id,
@@ -123,6 +161,100 @@ def get_job_field(job_id, field):
         spreadsheetId=sheet_id, range=f"{SHEET_NAME}!{col}{row}"
     ).execute().get("values", [])
     return values[0][0] if values and values[0] else ""
+
+
+_CHUNK_ROW_CACHE = {}
+
+
+def _load_chunk_rows(sheets, sid):
+    # Pastikan header tab benar (tab bisa dibuat manual/versi lama).
+    head = sheets.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{JOB_CHUNK_TAB}!A1:1"
+    ).execute().get("values", [])
+    if not head or [str(x) for x in head[0]] != JOB_CHUNK_HEADERS:
+        sheets.spreadsheets().values().update(
+            spreadsheetId=sid, range=f"{JOB_CHUNK_TAB}!A1",
+            valueInputOption="RAW", body={"values": [JOB_CHUNK_HEADERS]},
+        ).execute()
+    result = sheets.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{JOB_CHUNK_TAB}!A2:B"
+    ).execute()
+    for i, row in enumerate(result.get("values", [])):
+        if len(row) >= 2:
+            _CHUNK_ROW_CACHE[(sid, str(row[0]), str(row[1]))] = i + 2
+
+
+def upsert_chunk(job_id, idx, fields):
+    """Tulis/ubah satu baris chunk di tab JobChunks (tanpa read-modify-write JSON).
+
+    Aman untuk banyak chunk paralel karena setiap proses hanya menulis barisnya sendiri.
+    """
+    sheet_id = _spreadsheet_id()
+    sheets, _ = _services()
+    sid = _ensure_sheet(sheets, JOB_CHUNK_TAB, JOB_CHUNK_HEADERS)
+    key = (sid, str(job_id), str(idx))
+    row = _CHUNK_ROW_CACHE.get(key)
+    if row is None:
+        _load_chunk_rows(sheets, sid)
+        row = _CHUNK_ROW_CACHE.get(key)
+
+    fields = dict(fields)
+    fields["job_id"] = job_id
+    fields["idx"] = idx
+    fields["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    if row is None:
+        values = [[_cell(fields.get(header, "")) for header in JOB_CHUNK_HEADERS]]
+        result = sheets.spreadsheets().values().append(
+            spreadsheetId=sid, range=f"{JOB_CHUNK_TAB}!A1",
+            valueInputOption="RAW", insertDataOption="INSERT_ROWS",
+            body={"values": values},
+        ).execute()
+        updated_range = result.get("updates", {}).get("updatedRange", "")
+        match = re.search(r"![A-Z]+(\d+)", updated_range)
+        if match:
+            _CHUNK_ROW_CACHE[key] = int(match.group(1))
+        else:
+            _load_chunk_rows(sheets, sid)
+        return True
+
+    data = []
+    for header, value in fields.items():
+        col = JOB_CHUNK_COL.get(header)
+        if col is None:
+            continue
+        data.append({"range": f"{JOB_CHUNK_TAB}!{_col_letter(col)}{row}", "values": [[_cell(value)]]})
+    if data:
+        sheets.spreadsheets().values().batchUpdate(
+            spreadsheetId=sid,
+            body={"valueInputOption": "RAW", "data": data},
+        ).execute()
+    return True
+
+
+def fetch_job_chunks(job_id):
+    """Ambil semua baris chunk untuk satu job: {idx: {header: value}}."""
+    sheets, _ = _services()
+    sid = _spreadsheet_id()
+    _ensure_sheet(sheets, JOB_CHUNK_TAB, JOB_CHUNK_HEADERS)
+    values = sheets.spreadsheets().values().get(
+        spreadsheetId=sid, range=f"{JOB_CHUNK_TAB}!A:I"
+    ).execute().get("values", [])
+    if not values:
+        return {}
+    header = [str(h).strip() for h in values[0]]
+    out = {}
+    for row in values[1:]:
+        record = {header[i]: (row[i] if i < len(row) else "") for i in range(len(header))}
+        if str(record.get("job_id", "")) != str(job_id):
+            continue
+        try:
+            idx = int(float(str(record.get("idx", "")).strip() or -1))
+        except (TypeError, ValueError):
+            idx = -1
+        if idx >= 0:
+            out[idx] = record
+    return out
 
 
 LOG_TAB = "Logs"
@@ -284,18 +416,19 @@ def upload_csv(local_path, name=None, share_email=None):
     return file["id"], file.get("webViewLink", "")
 
 
-def _locked(fn):
-    """Bungkus fungsi publik dengan RLock agar aman dipakai lintas-thread."""
+def _guarded(fn):
+    """RLock (aman lintas-thread) + retry transien untuk fungsi publik."""
     def wrapper(*args, **kwargs):
         with _LOCK:
-            return fn(*args, **kwargs)
+            return _retry_call(fn, *args, **kwargs)
     wrapper.__name__ = getattr(fn, "__name__", "wrapped")
     return wrapper
 
 
 for _name in (
     "find_job_row", "update_job", "get_job_field", "_ensure_sheet", "fetch_tab_rows",
-    "fetch_column_values", "ensure_tab", "ensure_header", "append_rows", "overwrite_tab",
+    "fetch_column_values", "upsert_chunk", "fetch_job_chunks",
+    "ensure_tab", "ensure_header", "append_rows", "overwrite_tab",
     "append_log", "upload_csv",
 ):
-    globals()[_name] = _locked(globals()[_name])
+    globals()[_name] = _guarded(globals()[_name])

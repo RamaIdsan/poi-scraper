@@ -61,7 +61,7 @@ jobs:
     name: "scrape #${{ matrix.idx }}"
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: ${{ fromJSON(vars.MAX_CHUNK_PARALLEL || '2') }}
       matrix:
         idx: ${{ fromJson(needs.plan.outputs.idxs) }}
     steps:
